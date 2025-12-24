@@ -1,16 +1,16 @@
-use crate::definition::button::{ButtonBuilder, UiButton};
+use iced::Element;
+
+use crate::definition::button::main::UiButton;
 
 pub mod definition;
-pub mod helper;
 pub mod kit;
+pub mod mapper;
 
 #[derive(Debug, Clone)]
 pub enum KitMessage {
     ButtonPressed,
 }
 
-pub trait Kit<Message>: ButtonBuilder<Message> {
-    fn button(&self, label: impl Into<String>, on_press: Message) -> UiButton<Message, Self>
-    where
-        Self: Sized;
+pub trait Kit<Message: Clone + 'static> {
+    fn constr_button(&self, btn: UiButton<Message>) -> Element<'static, Message>;
 }

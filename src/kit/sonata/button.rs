@@ -1,19 +1,42 @@
-use std::sync::Arc;
-
+use iced::Alignment::Center;
+use iced::Length::Fill;
 use iced::border::Radius;
+use iced::widget::button;
 use iced::widget::button::Status;
 use iced::widget::text;
-use iced::widget::{Button, button};
-use iced::{Background, Border, Color, Padding, Shadow, Vector, widget};
+use iced::{Background, Border, Color, Element, Padding, Shadow, Vector, widget};
 
-use crate::definition::button::{ButtonBuilder, ButtonHierarchy, ButtonSize, UiButtonProperties};
+use crate::definition::button::props::{ButtonHierarchy, ButtonSize};
 use crate::kit::sonata::Sonata;
-use crate::kit::sonata::text::text::{TextStyle, TextStyle::TextSmM};
+use crate::kit::sonata::text::text::TextStyle;
 use crate::{Kit, UiButton};
 
 impl Sonata {
-    fn style(status: Status, hier: Option<ButtonHierarchy>) -> widget::button::Style {
-        let hier = hier.unwrap_or(ButtonHierarchy::Primary);
+    fn define_padding(size: &ButtonSize) -> Padding {
+        match size {
+            ButtonSize::SM => Padding {
+                top: 7.0,
+                right: 15.0,
+                bottom: 7.0,
+                left: 15.0,
+            },
+            ButtonSize::MD => Padding {
+                top: 9.0,
+                right: 17.0,
+                bottom: 9.0,
+                left: 17.0,
+            },
+            ButtonSize::LG => Padding {
+                top: 11.0,
+                right: 19.0,
+                bottom: 11.0,
+                left: 19.0,
+            },
+        }
+    }
+
+    fn style(status: Status, hier: Option<&ButtonHierarchy>) -> widget::button::Style {
+        let hier = hier.unwrap_or(&ButtonHierarchy::Primary);
         let mut style = widget::button::Style::default();
 
         match (status, hier) {
@@ -61,92 +84,30 @@ impl Sonata {
     }
 }
 
-impl<Message: Clone + 'static> ButtonBuilder<Message> for Sonata {
-    fn apply_size(
-        &self,
-        button: Button<'static, Message>,
-        size: ButtonSize,
-    ) -> Button<'static, Message> {
-        let padding = match size {
-            ButtonSize::SM => Padding {
-                top: 7.0,
-                right: 15.0,
-                bottom: 7.0,
-                left: 15.0,
-            },
-            ButtonSize::MD => Padding {
-                top: 9.0,
-                right: 19.0,
-                bottom: 9.0,
-                left: 19.0,
-            },
-            ButtonSize::LG => Padding {
-                top: 11.0,
-                right: 19.0,
-                bottom: 11.0,
-                left: 19.0,
-            },
-        };
+impl<Message: Clone + 'static> Kit<Message> for Sonata {
+    fn constr_button(&self, params: UiButton<Message>) -> Element<'static, Message> {
+        let UiButton {
+            label,
+            on_press,
+            props,
+            width,
+            ..
+        } = params;
 
-        button.padding(padding)
-    }
-
-    fn apply_hier(
-        &self,
-        button: Button<'static, Message>,
-        hier: ButtonHierarchy,
-    ) -> Button<'static, Message> {
-        button.style(move |_, status| Sonata::style(status, Some(hier.clone())))
-    }
-
-    fn button(&self, label: String, on_press: Message) -> Button<'static, Message> {
-        let el = button(
+        button(
             text(label)
                 .font(TextStyle::build_font(TextStyle::TextSmM))
+                .align_x(Center)
+                .width(Fill)
                 .size(14)
                 .style(|_| text::Style {
                     color: Some(Color::from_rgb8(255, 255, 255)),
                 }),
         )
-        .padding(Padding {
-            top: 7.0,
-            right: 15.0,
-            bottom: 7.0,
-            left: 15.0,
-        })
+        .padding(Self::define_padding(props.get_size()))
+        .width(width)
         .on_press(on_press)
-        .style(move |_, status| Sonata::style(status, Some(ButtonHierarchy::Primary)));
-
-        el
-    }
-}
-
-impl<Message: Clone + 'static> Kit<Message> for Sonata {
-    fn button<'a>(
-        &'a self,
-        label: impl Into<String>,
-        on_press: Message,
-    ) -> UiButton<Message, Self> {
-        let el = button(
-            text(label.into())
-                .font(TextStyle::build_font(TextStyle::TextSmM))
-                .size(14)
-                .style(|_| text::Style {
-                    color: Some(Color::from_rgb8(255, 255, 255)),
-                }),
-        )
-        .padding(Padding {
-            top: 7.0,
-            right: 15.0,
-            bottom: 7.0,
-            left: 15.0,
-        })
-        .on_press(on_press)
-        .style(move |_, status| Sonata::style(status, Some(ButtonHierarchy::Primary)));
-
-        UiButton {
-            inner: el,
-            kit: Arc::new(self.clone()),
-        }
+        .style(move |_, status| Self::style(status, Some(props.get_hier())))
+        .into()
     }
 }
