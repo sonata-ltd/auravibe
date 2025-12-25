@@ -1,3 +1,0 @@
-error: no matching package named `iced_uikit` found
-location searched: /home/quartix/Projects/iced-uikit/uikit
-required by package `iced-uikit v0.1.0 (/home/quartix/Projects/iced-uikit/example)`
