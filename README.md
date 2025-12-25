@@ -24,7 +24,7 @@ Unlike typical iced widgets, this library allows you to:
 ## Project State
 Todo list tracks implemented components and features from a [web version of AuraVibe UIKit.](https://github.com/sonata-ltd/launcher/tree/master/app/src/uikit/components)
 
-### Available Components:
+### Available Components
 - [x] Button
 - [ ] Card
 - [ ] CodeComponent
