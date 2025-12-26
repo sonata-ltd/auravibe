@@ -6,12 +6,12 @@ use crate::{
 };
 
 pub struct UiButton<'a, Message> {
-    pub(crate) label: String,
-    pub(crate) on_press: Message,
-    pub(crate) props: UiButtonProperties,
-    pub(crate) width: Length,
+    pub label: String,
+    pub on_press: Message,
+    pub props: UiButtonProperties,
+    pub width: Length,
 
-    pub(crate) kit: &'a Box<dyn Kit<Message>>,
+    pub kit: &'a Box<dyn Kit<Message>>,
 }
 
 impl<'a, Message> UiButton<'a, Message>
