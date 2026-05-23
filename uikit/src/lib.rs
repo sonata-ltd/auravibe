@@ -2,6 +2,7 @@ use iced::Element;
 
 use crate::definition::{button::UiButton, input::UiInput, sidebar::UiSidebar};
 
+pub mod cached;
 pub mod definition;
 pub mod kit;
 pub mod mapper;
