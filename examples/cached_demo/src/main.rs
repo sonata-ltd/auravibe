@@ -141,9 +141,9 @@ impl App {
             "Supersample: 1×".to_string()
         };
         let snap_label = match self.snap_mode {
-            PixelSnap::Auto => "Snap: Auto (crisp translate)",
-            PixelSnap::Always => "Snap: Always",
-            PixelSnap::Never => "Snap: Never (blurry translate)",
+            PixelSnap::Auto => "Snap: Auto (crisp at rest, smooth moving)",
+            PixelSnap::Always => "Snap: Always (crisp, steps)",
+            PixelSnap::Never => "Snap: Never (smooth, bicubic)",
         };
 
         let controls = row![

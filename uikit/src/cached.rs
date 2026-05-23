@@ -16,6 +16,8 @@
 //!   [`TextureCache::invalidate`] from `update()` whenever the
 //!   underlying content has changed. Size changes are detected
 //!   automatically by the backend.
+use std::cell::Cell;
+
 use iced::Element;
 use iced::Event;
 use iced::Length;
@@ -39,10 +41,16 @@ use iced::mouse;
 /// animations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PixelSnap {
-    /// Snap the origin to device pixels **only when the transform is a pure
-    /// translation** (no scale / rotation) — the browser-style default. Pure
-    /// translates stay crisp with zero extra cost; transforms that scale fall
-    /// through to the resample path (pair them with [`Cached::supersample`]).
+    /// Snap to the device grid **only for a pure translation that is at rest**
+    /// — crisp when stopped, smooth while moving. The default.
+    ///
+    /// Snapping a *moving* element quantizes it to whole device pixels, which
+    /// reads as jitter on a low-DPI display; resampling a *moving* element
+    /// instead keeps it smooth. So `Auto` snaps a translation only once it
+    /// stops changing (giving a pixel-perfect resting frame) and leaves it
+    /// un-snapped while it animates (the composite shader's bicubic
+    /// reconstruction keeps the moving edges from shimmering). Transforms that
+    /// scale never snap — pair them with [`Cached::supersample`].
     #[default]
     Auto,
     /// Always snap the composited origin to the device-pixel grid.
@@ -50,6 +58,17 @@ pub enum PixelSnap {
     /// Never snap; rely on [`Cached::supersample`] or accept the resampling
     /// softness of a fractional translate.
     Never,
+}
+
+/// Per-widget state, kept across frames by the widget tree.
+#[derive(Default)]
+struct State {
+    /// The transform composited on the previous frame. Used to detect when the
+    /// animation is at rest (transform unchanged) so [`PixelSnap::Auto`] can
+    /// snap to the device grid for a crisp resting frame, while leaving motion
+    /// un-snapped (and thus jitter-free). `Cell` so `draw` can update it through
+    /// the shared `&State` reference.
+    last_transform: Cell<Option<Transformation>>,
 }
 
 /// A wrapper widget that caches its content's rasterization in a
@@ -114,12 +133,11 @@ where
 
     /// Sets the [`PixelSnap`] policy for compositing the cache.
     ///
-    /// Defaults to [`PixelSnap::Auto`], which snaps the origin to the
-    /// device-pixel grid whenever the [`transform`](Self::transform) is a pure
-    /// translation — keeping `translate` animations crisp the way a browser
-    /// does, with no extra memory. Use [`PixelSnap::Never`] together with
-    /// [`supersample`](Self::supersample) if you prefer buttery sub-pixel
-    /// motion over per-pixel sharpness.
+    /// Defaults to [`PixelSnap::Auto`]: a pure-translation cache is snapped to
+    /// the device-pixel grid once it comes to rest (a crisp resting frame) and
+    /// left un-snapped while moving (smooth, jitter-free motion, with the
+    /// composite shader's bicubic reconstruction keeping moving edges from
+    /// shimmering). See [`PixelSnap`] for the other policies.
     ///
     /// Note: the tiny_skia (CPU) backend always integer-snaps the origin, so
     /// this policy only changes behavior on wgpu.
@@ -148,11 +166,11 @@ where
     Renderer: renderer::Renderer,
 {
     fn tag(&self) -> tree::Tag {
-        tree::Tag::stateless()
+        tree::Tag::of::<State>()
     }
 
     fn state(&self) -> tree::State {
-        tree::State::None
+        tree::State::new(State::default())
     }
 
     fn children(&self) -> Vec<Tree> {
@@ -238,15 +256,28 @@ where
             height: physical.height / tex_scale,
         };
 
-        // Optionally snap the composite origin to the device-pixel grid.
-        // `Auto` snaps only a pure translation (browser behavior): the texels
-        // then land exactly on device pixels, avoiding the bilinear resample
-        // that would otherwise soften a fractional offset. A transform that
-        // scales is left to the resample path (use `supersample`).
+        // Detect whether the animation is at rest by comparing this frame's
+        // transform to the previous one. The first draw is treated as at rest
+        // so a never-animated widget is crisp immediately.
+        let state = tree.state.downcast_ref::<State>();
+        let at_rest = state
+            .last_transform
+            .get()
+            .map_or(true, |prev| prev == self.transform);
+        state.last_transform.set(Some(self.transform));
+
+        // Decide whether to snap the composite origin to the device-pixel grid.
+        // `Auto` snaps only a pure translation that is **at rest**: the texels
+        // then land 1:1 on device pixels and the cache shows pixel-perfect
+        // crisp (the shader takes its aligned fast path). While the element is
+        // moving, `Auto` leaves the offset fractional so motion stays smooth
+        // and jitter-free — the shader's bicubic reconstruction keeps the
+        // moving edges from shimmering. A transform that scales never snaps
+        // (pair it with `supersample`).
         let snap = match self.pixel_snap {
             PixelSnap::Always => true,
             PixelSnap::Never => false,
-            PixelSnap::Auto => is_translation_only(&self.transform),
+            PixelSnap::Auto => is_translation_only(&self.transform) && at_rest,
         };
         let transform = if snap {
             // Map the origin to device space, round it, and rebuild the
