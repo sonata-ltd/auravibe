@@ -42,6 +42,8 @@ where
     content: Element<'a, Message, Theme, Renderer>,
     cache: TextureCache,
     transform: Transformation,
+    supersample: f32,
+    snap_to_pixels: bool,
 }
 
 impl<'a, Message, Theme, Renderer> Cached<'a, Message, Theme, Renderer>
@@ -57,6 +59,8 @@ where
             cache,
             content: content.into(),
             transform: Transformation::IDENTITY,
+            supersample: 1.0,
+            snap_to_pixels: false,
         }
     }
 
@@ -65,6 +69,37 @@ where
     /// contents without re-rasterizing them.
     pub fn transform(mut self, transform: Transformation) -> Self {
         self.transform = transform;
+        self
+    }
+
+    /// Records the cache at `factor`× the device resolution.
+    ///
+    /// When the cache is composited at a fractional device-pixel position
+    /// (the usual case during a translate animation), bilinear sampling
+    /// blends neighbouring texels and softens the image. Recording at a
+    /// higher resolution shrinks that resampling error by roughly `1 /
+    /// factor`, keeping motion both smooth **and** sharp at the cost of
+    /// `factor²` texture memory and a one-time `factor²` rasterization.
+    ///
+    /// Values below `1.0` are clamped to `1.0` (the default). A factor of
+    /// `1.5`–`2.0` is the sweet spot; larger factors undersample on the wgpu
+    /// backend, which has no mipmaps for the cache. Changing the factor
+    /// transparently re-records the cache.
+    pub fn supersample(mut self, factor: f32) -> Self {
+        self.supersample = factor.max(1.0);
+        self
+    }
+
+    /// Snaps the composited cache's origin to the device-pixel grid.
+    ///
+    /// Eliminates the resampling softness of a fractional translate at the
+    /// cost of quantizing motion to whole device pixels (slow movement
+    /// visibly stair-steps). Defaults to `false`.
+    ///
+    /// Note: the tiny_skia (CPU) backend always integer-snaps the origin, so
+    /// this toggle only changes behavior on wgpu.
+    pub fn snap_to_pixels(mut self, snap: bool) -> Self {
+        self.snap_to_pixels = snap;
         self
     }
 }
@@ -121,6 +156,12 @@ where
     ) {
         let bounds = layout.bounds();
         let scale = renderer.scale_factor().unwrap_or(1.0);
+        let ss = self.supersample.max(1.0);
+        // Record at `scale * ss` so the texture (and the text inside it) is
+        // rasterized at `ss`× the device resolution. The backend sizes the
+        // backing store as `round(size * tex_scale)` and records through a
+        // viewport at this scale, so supersampling needs no backend change.
+        let tex_scale = scale * ss;
         let size = Size::new(
             bounds.width.ceil().max(1.0) as u32,
             bounds.height.ceil().max(1.0) as u32,
@@ -130,7 +171,7 @@ where
         // size/scale match, the closure is skipped entirely by the backend.
         let content = &self.content;
         let content_tree = &tree.children[0];
-        renderer.draw_to_texture(&self.cache, size, scale, |r| {
+        renderer.draw_to_texture(&self.cache, size, tex_scale, |r| {
             // Shift the content's coordinate origin to (0, 0) so it lands
             // inside the cache texture instead of being drawn at the
             // widget's screen-space position.
@@ -141,9 +182,42 @@ where
             });
         });
 
-        // Composite the cache under the animation transform.
-        renderer.with_transformation(self.transform, |r| {
-            r.draw_cached_texture(&self.cache, bounds);
+        // Composite the cache so the quad covers `physical / ss` device
+        // pixels. The layout bounds are fractional; deriving the destination
+        // from the physical backing size avoids the sub-pixel scale drift
+        // that resamples and blurs the content. When `ss == 1` this is an
+        // exact one-texel-per-device-pixel blit (scale 1.0); when `ss > 1` it
+        // is a clean `ss`:1 downsample whose bilinear resampling stays sharp
+        // even at a fractional translate.
+        let physical = Size::new(
+            (size.width as f32 * tex_scale).round(),
+            (size.height as f32 * tex_scale).round(),
+        );
+        let cache_bounds = Rectangle {
+            x: bounds.x,
+            y: bounds.y,
+            width: physical.width / tex_scale,
+            height: physical.height / tex_scale,
+        };
+
+        // Optionally snap the composite origin to the device-pixel grid.
+        // `Transformation` in iced is scale + translate only (no rotation /
+        // shear), so we can map the origin to device space, round it, and
+        // rebuild the transform with a corrected translation.
+        let transform = if self.snap_to_pixels {
+            let s = self.transform.scale_factor();
+            let t = self.transform.translation();
+            let dev_x = (s * bounds.x + t.x) * scale;
+            let dev_y = (s * bounds.y + t.y) * scale;
+            let tx = dev_x.round() / scale - s * bounds.x;
+            let ty = dev_y.round() / scale - s * bounds.y;
+            Transformation::translate(tx, ty) * Transformation::scale(s)
+        } else {
+            self.transform
+        };
+
+        renderer.with_transformation(transform, |r| {
+            r.draw_cached_texture(&self.cache, cache_bounds);
         });
     }
 

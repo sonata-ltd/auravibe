@@ -34,6 +34,8 @@ struct App {
     started_at: Option<Instant>,
     elapsed: f32,
     cache: TextureCache,
+    supersample: f32,
+    snap: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -41,6 +43,8 @@ enum Message {
     Tick(Instant),
     Reset,
     InvalidateCache,
+    ToggleSupersample,
+    ToggleSnap,
 }
 
 impl App {
@@ -50,6 +54,10 @@ impl App {
                 started_at: None,
                 elapsed: 0.0,
                 cache: TextureCache::new(),
+                // Record the card at 2× resolution so its text stays sharp
+                // while it slides across fractional device-pixel positions.
+                supersample: 2.0,
+                snap: false,
             },
             Task::none(),
         )
@@ -75,6 +83,12 @@ impl App {
             }
             Message::InvalidateCache => {
                 self.cache.invalidate();
+            }
+            Message::ToggleSupersample => {
+                self.supersample = if self.supersample > 1.0 { 1.0 } else { 2.0 };
+            }
+            Message::ToggleSnap => {
+                self.snap = !self.snap;
             }
         }
         Task::none()
@@ -112,11 +126,27 @@ impl App {
             ..Default::default()
         });
 
-        let cached = Cached::new(self.cache.clone(), card).transform(transform);
+        let cached = Cached::new(self.cache.clone(), card)
+            .transform(transform)
+            .supersample(self.supersample)
+            .snap_to_pixels(self.snap);
+
+        let ss_label = if self.supersample > 1.0 {
+            format!("Supersample: {:.0}× (sharp)", self.supersample)
+        } else {
+            "Supersample: 1× (blurry in motion)".to_string()
+        };
+        let snap_label = if self.snap {
+            "Pixel snap: on (crisp, steppy)"
+        } else {
+            "Pixel snap: off"
+        };
 
         let controls = row![
             button(text("Reset animation")).on_press(Message::Reset),
             button(text("Invalidate cache")).on_press(Message::InvalidateCache),
+            button(text(ss_label)).on_press(Message::ToggleSupersample),
+            button(text(snap_label)).on_press(Message::ToggleSnap),
         ]
         .spacing(10);
 
