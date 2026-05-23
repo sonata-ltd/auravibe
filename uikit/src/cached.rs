@@ -30,6 +30,28 @@ use iced::advanced::widget::{Operation, Tree, Widget, tree};
 use iced::advanced::{Shell, overlay};
 use iced::mouse;
 
+/// Controls whether the composited cache is snapped to the device-pixel grid.
+///
+/// Snapping the origin to whole device pixels avoids the bilinear resampling
+/// that softens a cache composited at a fractional position, but quantizes
+/// motion to whole device pixels. This is exactly what browsers do for
+/// translation-only compositor layers to keep text crisp during `translate`
+/// animations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PixelSnap {
+    /// Snap the origin to device pixels **only when the transform is a pure
+    /// translation** (no scale / rotation) — the browser-style default. Pure
+    /// translates stay crisp with zero extra cost; transforms that scale fall
+    /// through to the resample path (pair them with [`Cached::supersample`]).
+    #[default]
+    Auto,
+    /// Always snap the composited origin to the device-pixel grid.
+    Always,
+    /// Never snap; rely on [`Cached::supersample`] or accept the resampling
+    /// softness of a fractional translate.
+    Never,
+}
+
 /// A wrapper widget that caches its content's rasterization in a
 /// [`TextureCache`] and composites it under an optional
 /// [`Transformation`].
@@ -43,7 +65,7 @@ where
     cache: TextureCache,
     transform: Transformation,
     supersample: f32,
-    snap_to_pixels: bool,
+    pixel_snap: PixelSnap,
 }
 
 impl<'a, Message, Theme, Renderer> Cached<'a, Message, Theme, Renderer>
@@ -60,7 +82,7 @@ where
             content: content.into(),
             transform: Transformation::IDENTITY,
             supersample: 1.0,
-            snap_to_pixels: false,
+            pixel_snap: PixelSnap::Auto,
         }
     }
 
@@ -90,18 +112,34 @@ where
         self
     }
 
-    /// Snaps the composited cache's origin to the device-pixel grid.
+    /// Sets the [`PixelSnap`] policy for compositing the cache.
     ///
-    /// Eliminates the resampling softness of a fractional translate at the
-    /// cost of quantizing motion to whole device pixels (slow movement
-    /// visibly stair-steps). Defaults to `false`.
+    /// Defaults to [`PixelSnap::Auto`], which snaps the origin to the
+    /// device-pixel grid whenever the [`transform`](Self::transform) is a pure
+    /// translation — keeping `translate` animations crisp the way a browser
+    /// does, with no extra memory. Use [`PixelSnap::Never`] together with
+    /// [`supersample`](Self::supersample) if you prefer buttery sub-pixel
+    /// motion over per-pixel sharpness.
     ///
     /// Note: the tiny_skia (CPU) backend always integer-snaps the origin, so
-    /// this toggle only changes behavior on wgpu.
-    pub fn snap_to_pixels(mut self, snap: bool) -> Self {
-        self.snap_to_pixels = snap;
+    /// this policy only changes behavior on wgpu.
+    pub fn pixel_snap(mut self, mode: PixelSnap) -> Self {
+        self.pixel_snap = mode;
         self
     }
+}
+
+/// Returns `true` if `t` is a pure 2D translation (identity linear part), the
+/// case in which snapping the origin to the device grid is lossless. Reading
+/// the raw matrix keeps this correct even if `Transformation` later gains a
+/// `rotate` (rotation/shear leaves the off-diagonal terms non-zero).
+fn is_translation_only(t: &Transformation) -> bool {
+    let m: &[f32; 16] = t.as_ref();
+    const EPS: f32 = 1e-4;
+    (m[0] - 1.0).abs() < EPS
+        && (m[5] - 1.0).abs() < EPS
+        && m[1].abs() < EPS
+        && m[4].abs() < EPS
 }
 
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
@@ -201,10 +239,18 @@ where
         };
 
         // Optionally snap the composite origin to the device-pixel grid.
-        // `Transformation` in iced is scale + translate only (no rotation /
-        // shear), so we can map the origin to device space, round it, and
-        // rebuild the transform with a corrected translation.
-        let transform = if self.snap_to_pixels {
+        // `Auto` snaps only a pure translation (browser behavior): the texels
+        // then land exactly on device pixels, avoiding the bilinear resample
+        // that would otherwise soften a fractional offset. A transform that
+        // scales is left to the resample path (use `supersample`).
+        let snap = match self.pixel_snap {
+            PixelSnap::Always => true,
+            PixelSnap::Never => false,
+            PixelSnap::Auto => is_translation_only(&self.transform),
+        };
+        let transform = if snap {
+            // Map the origin to device space, round it, and rebuild the
+            // transform with a corrected translation (keeping any scale).
             let s = self.transform.scale_factor();
             let t = self.transform.translation();
             let dev_x = (s * bounds.x + t.x) * scale;

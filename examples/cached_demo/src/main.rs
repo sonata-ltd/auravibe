@@ -20,7 +20,7 @@ use iced::{
     widget::{button, column, container, row, text},
     window,
 };
-use iced_auravibe::cached::Cached;
+use iced_auravibe::cached::{Cached, PixelSnap};
 
 fn main() -> iced::Result {
     iced::application(App::new, App::update, App::view)
@@ -35,7 +35,7 @@ struct App {
     elapsed: f32,
     cache: TextureCache,
     supersample: f32,
-    snap: bool,
+    snap_mode: PixelSnap,
 }
 
 #[derive(Clone, Debug)]
@@ -54,10 +54,10 @@ impl App {
                 started_at: None,
                 elapsed: 0.0,
                 cache: TextureCache::new(),
-                // Record the card at 2× resolution so its text stays sharp
-                // while it slides across fractional device-pixel positions.
-                supersample: 2.0,
-                snap: false,
+                // Default 1×: with PixelSnap::Auto, a pure-translate animation
+                // stays crisp without supersampling — the browser-style path.
+                supersample: 1.0,
+                snap_mode: PixelSnap::Auto,
             },
             Task::none(),
         )
@@ -88,7 +88,11 @@ impl App {
                 self.supersample = if self.supersample > 1.0 { 1.0 } else { 2.0 };
             }
             Message::ToggleSnap => {
-                self.snap = !self.snap;
+                self.snap_mode = match self.snap_mode {
+                    PixelSnap::Auto => PixelSnap::Always,
+                    PixelSnap::Always => PixelSnap::Never,
+                    PixelSnap::Never => PixelSnap::Auto,
+                };
             }
         }
         Task::none()
@@ -129,17 +133,17 @@ impl App {
         let cached = Cached::new(self.cache.clone(), card)
             .transform(transform)
             .supersample(self.supersample)
-            .snap_to_pixels(self.snap);
+            .pixel_snap(self.snap_mode);
 
         let ss_label = if self.supersample > 1.0 {
-            format!("Supersample: {:.0}× (sharp)", self.supersample)
+            format!("Supersample: {:.0}×", self.supersample)
         } else {
-            "Supersample: 1× (blurry in motion)".to_string()
+            "Supersample: 1×".to_string()
         };
-        let snap_label = if self.snap {
-            "Pixel snap: on (crisp, steppy)"
-        } else {
-            "Pixel snap: off"
+        let snap_label = match self.snap_mode {
+            PixelSnap::Auto => "Snap: Auto (crisp translate)",
+            PixelSnap::Always => "Snap: Always",
+            PixelSnap::Never => "Snap: Never (blurry translate)",
         };
 
         let controls = row![
