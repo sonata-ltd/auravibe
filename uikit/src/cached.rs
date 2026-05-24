@@ -16,6 +16,12 @@
 //!   [`TextureCache::invalidate`] from `update()` whenever the
 //!   underlying content has changed. Size changes are detected
 //!   automatically by the backend.
+//!
+//! - The widget reserves a small (~2 logical px) transparent margin around the
+//!   content inside the cache texture so its edges anti-alias against
+//!   transparency instead of crawling when composited at a fractional offset.
+//!   Content is assumed to draw strictly within its layout bounds; the margin
+//!   is bleed room, not extra paintable area.
 use std::cell::Cell;
 
 use iced::Element;
@@ -85,6 +91,7 @@ where
     transform: Transformation,
     supersample: f32,
     pixel_snap: PixelSnap,
+    auto_supersample_on_motion: bool,
 }
 
 impl<'a, Message, Theme, Renderer> Cached<'a, Message, Theme, Renderer>
@@ -102,6 +109,7 @@ where
             transform: Transformation::IDENTITY,
             supersample: 1.0,
             pixel_snap: PixelSnap::Auto,
+            auto_supersample_on_motion: false,
         }
     }
 
@@ -116,8 +124,8 @@ where
     /// Records the cache at `factor`× the device resolution.
     ///
     /// When the cache is composited at a fractional device-pixel position
-    /// (the usual case during a translate animation), bilinear sampling
-    /// blends neighbouring texels and softens the image. Recording at a
+    /// (the usual case during a translate animation), the composite's bicubic
+    /// reconstruction blends neighbouring texels and softens the image. Recording at a
     /// higher resolution shrinks that resampling error by roughly `1 /
     /// factor`, keeping motion both smooth **and** sharp at the cost of
     /// `factor²` texture memory and a one-time `factor²` rasterization.
@@ -143,6 +151,25 @@ where
     /// this policy only changes behavior on wgpu.
     pub fn pixel_snap(mut self, mode: PixelSnap) -> Self {
         self.pixel_snap = mode;
+        self
+    }
+
+    /// Enables supersampling **only while the cache is moving**.
+    ///
+    /// Off by default. When enabled, a cache that is animating and not snapped
+    /// (the un-snapped path of [`PixelSnap::Auto`], or [`PixelSnap::Never`]) is
+    /// recorded at `max(supersample, 1.5)`× the device resolution, so the
+    /// fractional-offset resampling stays sharper in motion; at rest it drops
+    /// back to the plain [`Cached::supersample`] factor (`1.0` by default) and
+    /// snaps for a pixel-perfect resting frame.
+    ///
+    /// This re-records the cache at the rest↔motion transition (one extra
+    /// rasterization of the content each way), so it trades a possible one-frame
+    /// hitch at the start/end of an animation for sharper motion — without paying
+    /// for supersampling permanently. Leave it off for genuinely expensive
+    /// content whose re-rasterization cost outweighs the in-motion sharpness.
+    pub fn auto_supersample_on_motion(mut self, on: bool) -> Self {
+        self.auto_supersample_on_motion = on;
         self
     }
 }
@@ -210,55 +237,23 @@ where
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
+        // Transparent bleed margin (logical px) reserved around the content
+        // inside the cache texture; applied where the texture is sized below.
+        const MARGIN: u32 = 2;
+
         let bounds = layout.bounds();
         let scale = renderer.scale_factor().unwrap_or(1.0);
-        let ss = self.supersample.max(1.0);
-        // Record at `scale * ss` so the texture (and the text inside it) is
-        // rasterized at `ss`× the device resolution. The backend sizes the
-        // backing store as `round(size * tex_scale)` and records through a
-        // viewport at this scale, so supersampling needs no backend change.
-        let tex_scale = scale * ss;
-        let size = Size::new(
-            bounds.width.ceil().max(1.0) as u32,
-            bounds.height.ceil().max(1.0) as u32,
-        );
-
-        // Record the content into the cache. If the cache is fresh and the
-        // size/scale match, the closure is skipped entirely by the backend.
-        let content = &self.content;
-        let content_tree = &tree.children[0];
-        renderer.draw_to_texture(&self.cache, size, tex_scale, |r| {
-            // Shift the content's coordinate origin to (0, 0) so it lands
-            // inside the cache texture instead of being drawn at the
-            // widget's screen-space position.
-            r.with_translation(Vector::new(-bounds.x, -bounds.y), |r| {
-                content.as_widget().draw(
-                    content_tree, r, theme, style, layout, cursor, viewport,
-                );
-            });
-        });
-
-        // Composite the cache so the quad covers `physical / ss` device
-        // pixels. The layout bounds are fractional; deriving the destination
-        // from the physical backing size avoids the sub-pixel scale drift
-        // that resamples and blurs the content. When `ss == 1` this is an
-        // exact one-texel-per-device-pixel blit (scale 1.0); when `ss > 1` it
-        // is a clean `ss`:1 downsample whose bilinear resampling stays sharp
-        // even at a fractional translate.
-        let physical = Size::new(
-            (size.width as f32 * tex_scale).round(),
-            (size.height as f32 * tex_scale).round(),
-        );
-        let cache_bounds = Rectangle {
-            x: bounds.x,
-            y: bounds.y,
-            width: physical.width / tex_scale,
-            height: physical.height / tex_scale,
-        };
 
         // Detect whether the animation is at rest by comparing this frame's
-        // transform to the previous one. The first draw is treated as at rest
-        // so a never-animated widget is crisp immediately.
+        // transform to the previous one. This is *frame-perfect* detection (a
+        // 4x4 matrix equality): if an animation curve plateaus on its very first
+        // moving frame, `at_rest` reads `true` for that one frame and the
+        // in-motion behavior (un-snap, optional supersample) engages a frame
+        // late — self-correcting, and the same 1-frame property the snap below
+        // already has. Real UI curves change the matrix every frame, so it is a
+        // non-issue; add a `motion_frames` hysteresis counter only if false
+        // triggers ever surface. The first draw is treated as at rest so a
+        // never-animated widget is crisp immediately.
         let state = tree.state.downcast_ref::<State>();
         let at_rest = state
             .last_transform
@@ -266,28 +261,100 @@ where
             .map_or(true, |prev| prev == self.transform);
         state.last_transform.set(Some(self.transform));
 
-        // Decide whether to snap the composite origin to the device-pixel grid.
-        // `Auto` snaps only a pure translation that is **at rest**: the texels
-        // then land 1:1 on device pixels and the cache shows pixel-perfect
-        // crisp (the shader takes its aligned fast path). While the element is
-        // moving, `Auto` leaves the offset fractional so motion stays smooth
-        // and jitter-free — the shader's bicubic reconstruction keeps the
-        // moving edges from shimmering. A transform that scales never snaps
-        // (pair it with `supersample`).
+        // Choose the record resolution. `auto_supersample_on_motion` lifts it to
+        // at least 1.5x while moving (sharper fractional-offset resampling) and
+        // drops back to the base factor at rest, where we snap and want a 1:1
+        // crisp blit. Changing the factor transparently re-records the cache.
+        let base_ss = self.supersample.max(1.0);
+        let ss = if self.auto_supersample_on_motion && !at_rest {
+            base_ss.max(1.5)
+        } else {
+            base_ss
+        };
+        // Record at `scale * ss` so the texture (and the text inside it) is
+        // rasterized at `ss`x the device resolution. The backend sizes the
+        // backing store as `round(size * tex_scale)` and records through a
+        // viewport at this scale, so supersampling needs no backend change.
+        let tex_scale = scale * ss;
+
+        // Reserve a transparent margin around the content inside the cache
+        // texture. Without it the content's hard edges sit on the texture
+        // boundary (texel 0 / N-1); composited at a fractional offset the
+        // sampler's ClampToEdge can't fade the kernel into transparency and the
+        // edge "crawls". Drawing the content inset by MARGIN surrounds it with
+        // the transparent clear color so its edges anti-alias cleanly — the same
+        // effect as wrapping it in a padded container, done automatically.
+        // 2 logical px covers the 4x4 kernel's +/-2 texel reach at scale 1 / ss 1.
+        let size = Size::new(
+            bounds.width.ceil().max(1.0) as u32,
+            bounds.height.ceil().max(1.0) as u32,
+        );
+        let padded = Size::new(size.width + 2 * MARGIN, size.height + 2 * MARGIN);
+
+        // Record the content into the cache. If the cache is fresh and the
+        // size/scale match, the closure is skipped entirely by the backend.
+        let content = &self.content;
+        let content_tree = &tree.children[0];
+        renderer.draw_to_texture(&self.cache, padded, tex_scale, |r| {
+            // Shift the content's coordinate origin so it lands inside the cache
+            // texture inset by the transparent margin, instead of at the
+            // widget's screen-space position.
+            r.with_translation(
+                Vector::new(-bounds.x + MARGIN as f32, -bounds.y + MARGIN as f32),
+                |r| {
+                    content.as_widget().draw(
+                        content_tree, r, theme, style, layout, cursor, viewport,
+                    );
+                },
+            );
+        });
+
+        // Composite the (padded) cache. The layout bounds are fractional;
+        // deriving the destination size from the physical backing size avoids
+        // the sub-pixel scale drift that resamples and blurs the content. The
+        // origin is shifted back by the margin so the content lands exactly
+        // where it would without the margin. When `ss == 1` this is an exact
+        // one-texel-per-device-pixel blit; when `ss > 1` it is a clean `ss`:1
+        // downsample whose resampling stays sharp even at a fractional translate.
+        let physical = Size::new(
+            (padded.width as f32 * tex_scale).round(),
+            (padded.height as f32 * tex_scale).round(),
+        );
+        let cache_bounds = Rectangle {
+            x: bounds.x - MARGIN as f32,
+            y: bounds.y - MARGIN as f32,
+            width: physical.width / tex_scale,
+            height: physical.height / tex_scale,
+        };
+
+        // Decide whether to snap the composite to the device-pixel grid. `Auto`
+        // snaps only a pure translation that is **at rest**: the texels then land
+        // 1:1 on device pixels and the cache is pixel-perfect crisp (the shader
+        // takes its aligned fast path). While moving, `Auto` leaves the offset
+        // fractional so motion stays smooth and jitter-free — the shader's
+        // bicubic reconstruction keeps the moving edges sharp. A transform that
+        // scales never snaps (pair it with `supersample`).
         let snap = match self.pixel_snap {
             PixelSnap::Always => true,
             PixelSnap::Never => false,
             PixelSnap::Auto => is_translation_only(&self.transform) && at_rest,
         };
         let transform = if snap {
-            // Map the origin to device space, round it, and rebuild the
-            // transform with a corrected translation (keeping any scale).
+            // Snap the *texture/quad origin* (the cache_bounds origin), not the
+            // content origin, so the whole texel grid lands on the device grid
+            // and the resting frame samples at integer phase, where Catmull-Rom
+            // is exact. Snapping the content origin instead would only align the
+            // grid when MARGIN*scale is integral (e.g. scale 1); at a fractional
+            // scale it would leave every sample at ~0.5 phase and soften the
+            // resting frame. At scale 1 the two are identical. Any scale is kept.
             let s = self.transform.scale_factor();
             let t = self.transform.translation();
-            let dev_x = (s * bounds.x + t.x) * scale;
-            let dev_y = (s * bounds.y + t.y) * scale;
-            let tx = dev_x.round() / scale - s * bounds.x;
-            let ty = dev_y.round() / scale - s * bounds.y;
+            let qx = bounds.x - MARGIN as f32;
+            let qy = bounds.y - MARGIN as f32;
+            let dev_x = (s * qx + t.x) * scale;
+            let dev_y = (s * qy + t.y) * scale;
+            let tx = dev_x.round() / scale - s * qx;
+            let ty = dev_y.round() / scale - s * qy;
             Transformation::translate(tx, ty) * Transformation::scale(s)
         } else {
             self.transform
