@@ -1,6 +1,6 @@
 use iced::{Element, Task, widget::text};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Message {
     Increase,
     Decrease,

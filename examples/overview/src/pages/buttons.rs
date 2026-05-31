@@ -1,7 +1,9 @@
+use crate::pages::inputs::InputsPage;
 use crate::pages::inputs::NavOptions as InputsNavOptions;
-use crate::pages::{Action, PageView, inputs::InputsPage};
-use crate::state::AppState;
 use iced::{Element, widget::column};
+use iced_auravibe::appstate::AppState;
+use iced_auravibe::router::action::Action;
+use iced_auravibe::router::page::PageView;
 use iced_auravibe::{Kit, definition::button::props::ButtonHierarchy, mapper::UIMapper};
 
 #[derive(Clone)]

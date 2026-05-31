@@ -4,19 +4,20 @@ use iced::{
 };
 
 use iced_auravibe::{
-    Kit, KitProvider, definition::button::props::ButtonHierarchy, kit::sonata::SonataProvider,
+    Kit, KitProvider,
+    appstate::AppState,
+    definition::button::props::ButtonHierarchy,
+    kit::sonata::SonataProvider,
     mapper::UIMapper,
+    router::{Route, RouteMessage},
 };
 
-use crate::{
-    pages::{buttons::ButtonsPage, example_page::ExamplePage, inputs::InputsPage},
-    route::{Route, RouteMessage},
-    state::AppState,
+use crate::pages::{
+    buttons::ButtonsPage, content_stack::ContentStackPage, example_page::ExamplePage,
+    inputs::InputsPage,
 };
 
 mod pages;
-mod route;
-mod state;
 
 fn main() -> iced::Result {
     iced::application(
@@ -53,6 +54,7 @@ impl<KitP: KitProvider> AppData<KitP> {
         route.add::<ButtonsPage>("Buttons");
         route.add::<InputsPage>("Inputs");
         route.add::<ExamplePage>("Example Page");
+        route.add::<ContentStackPage>("Content Stack");
 
         (Self { route, uikit }, Task::none())
     }

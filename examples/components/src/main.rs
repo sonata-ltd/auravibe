@@ -26,7 +26,7 @@ struct AppData {
     uikit: Box<dyn for<'a> Kit<'a, Message>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Message {
     Counter(number::Message),
 }

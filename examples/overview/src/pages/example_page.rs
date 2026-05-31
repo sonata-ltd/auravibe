@@ -1,8 +1,9 @@
-use crate::pages::{Action, PageView};
-use crate::state::AppState;
 use iced::widget::text;
 use iced::{Element, widget::column};
 use iced_auravibe::Kit;
+use iced_auravibe::appstate::AppState;
+use iced_auravibe::router::action::Action;
+use iced_auravibe::router::page::PageView;
 
 #[derive(Clone)]
 pub enum Message {}

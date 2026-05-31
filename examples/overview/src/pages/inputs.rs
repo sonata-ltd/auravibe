@@ -2,11 +2,11 @@ use iced::{
     Element,
     widget::{Space, column},
 };
-use iced_auravibe::{Kit, mapper::UIMapper};
-
-use crate::{
-    pages::{Action, PageView},
-    state::AppState,
+use iced_auravibe::{
+    Kit,
+    appstate::AppState,
+    mapper::UIMapper,
+    router::{action::Action, page::PageView},
 };
 
 #[derive(Clone)]
