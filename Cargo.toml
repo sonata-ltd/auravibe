@@ -7,7 +7,7 @@ members = [
 exclude = ["vendor/iced"]
 
 [workspace.dependencies]
-iced = { path = "vendor/iced", default-features = false, features = [
+iced = { path = "vendor/iced", default-features = true, features = [
     "advanced",
     "canvas",
     "image",
@@ -34,3 +34,11 @@ rust-version = "1.91.1"
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
+
+# Optimize dependencies even in debug builds. Glyph shaping/rasterization
+# (cosmic-text / swash / ttf-parser behind cryoglyph) is ~10-50x slower
+# unoptimized and otherwise dominates the frame during text-heavy redraws
+# (e.g. window resize). Our own crates stay unoptimized for fast incremental
+# builds and debuggability.
+[profile.dev.package."*"]
+opt-level = 2

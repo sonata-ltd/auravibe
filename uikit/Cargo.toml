@@ -11,8 +11,6 @@ rust-version.workspace = true
 bytemuck = "1.25.0"
 fontdue = "0.9.3"
 iced = { workspace = true }
-iced_graphics = "0.14.0"
-iced_wgpu = "0.14.0"
 pollster = "0.4.0"
 smallbox = "0.8.8"
 
