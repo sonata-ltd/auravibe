@@ -35,11 +35,12 @@ where
     pub fn new(
         child: impl Into<Element<'a, Message, Theme, Renderer>>,
         text: impl Into<String>,
+        show: bool,
     ) -> Self {
         Self {
             child: child.into(),
             text: text.into(),
-            show: true,
+            show,
         }
     }
 }

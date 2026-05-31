@@ -1,89 +1,47 @@
 use iced::{
-    Background, Border, Color, Element, Shadow, Theme,
-    widget::{
-        scrollable,
-        scrollable::{AutoScroll, Rail, Scroller},
-    },
+    Background, Border, Color, Element,
+    Length::{Fill, Shrink},
+    Renderer, Theme, Vector,
+    border::Radius,
+    widget::{Container, column, container, text},
 };
 
-use crate::kit::sonata::Sonata;
+use crate::{
+    definition::window::UiWindow,
+    kit::sonata::{Sonata, utils::text::text::TextStyle},
+};
 
+mod content_stack;
 mod vars;
-mod widget;
-
-fn custom_scrollable_style(_: &Theme, status: scrollable::Status) -> scrollable::Style {
-    let scroller = Scroller {
-        background: match status {
-            scrollable::Status::Dragged { .. } => {
-                Background::Color(Color::from_rgb8(185, 186, 189))
-            } // When dragging
-            scrollable::Status::Hovered { .. } => {
-                Background::Color(Color::from_rgb8(207, 209, 210))
-            } // On hover
-            _ => Background::Color(Color::from_rgb8(207, 209, 210)), // Default
-        },
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 999.into(),
-        },
-    };
-
-    let rail = Rail {
-        background: match status {
-            scrollable::Status::Hovered { .. } => {
-                Some(Background::Color(Color::from_rgb8(230, 231, 232)))
-            }
-            scrollable::Status::Dragged { .. } => {
-                Some(Background::Color(Color::from_rgb8(230, 231, 232)))
-            }
-            _ => Some(Background::Color(Color::TRANSPARENT)),
-        },
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 999.into(),
-        },
-        scroller,
-    };
-
-    let auto_scroll = AutoScroll {
-        background: Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.5)),
-        border: Border {
-            color: Color::BLACK,
-            width: 1.0,
-            radius: 5.0.into(),
-        },
-        shadow: Shadow::default(),
-        icon: Color::WHITE,
-    };
-
-    scrollable::Style {
-        container: iced::widget::container::Style::default(), // Background of the scroll area
-        vertical_rail: rail,
-        horizontal_rail: rail,
-        gap: None,
-        auto_scroll,
-    }
-}
 
 impl<Message: Clone + 'static> Sonata<Message> {
     pub fn window<'a>(&self, params: UiWindow<'a, Message>) -> Element<'a, Message> {
-        widget::Window::new(params).into()
+        let mut widget = content_stack::ContentStack::from_vec(
+            params.content_stack_childs.1,
+            params.content_stack_childs.0,
+        );
 
-        // let header = container(
-        //     text(params.label)
-        //         .size(18)
-        //         .font(TextStyle::TextLgSm.build_font()),
-        // )
-        // .style(|_| container::Style {
-        //     background: Some(Background::Color(Color::TRANSPARENT)),
-        //     border: *vars::HEADER_BORDER,
-        //     shadow: *vars::HEADER_BOTTOM_SHADOW,
-        //     ..Default::default()
-        // })
-        // .width(Fill)
-        // .padding(*vars::HEADER_PADDING);
+        // if let Some(max_height) = params.max_height {
+        //     widget = widget.max_height(max_height);
+        // }
+
+        if let Some(width) = params.width {
+            widget = widget.width(width);
+        }
+
+        let header: Container<'_, Message, Theme, Renderer> = container(
+            text(params.label)
+                .size(18)
+                .font(TextStyle::TextLgSm.build_font()),
+        )
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(Color::TRANSPARENT)),
+            border: *vars::HEADER_BORDER,
+            shadow: *vars::HEADER_BOTTOM_SHADOW,
+            ..Default::default()
+        })
+        .width(Fill)
+        .padding(*vars::HEADER_PADDING);
 
         // let content = container(
         //     scrollable(
@@ -121,7 +79,7 @@ impl<Message: Clone + 'static> Sonata<Message> {
         //     bottom: 5.0,
         // });
 
-        // let main_content = column![header, content].width(Fill);
+        let main_content = column![header, widget].width(Fill).clip(true);
 
         // let controls_overlay = if let Some(controls) = params.controls_child {
         //     container(
@@ -149,19 +107,40 @@ impl<Message: Clone + 'static> Sonata<Message> {
 
         // let window_content = stack![main_content, controls_overlay];
 
-        // let window = container(window_content)
-        //     .style(|_| container::Style {
-        //         background: *vars::BACKGROUND,
-        //         border: Border {
-        //             color: Color::TRANSPARENT,
-        //             width: 0.0,
-        //             radius: Radius::from(25),
-        //         },
-        //         ..Default::default()
-        //     })
-        //     .height(Shrink)
-        //     .width(400)
-        //     .clip(true);
+        let window = container(
+            container(main_content)
+                .style(|_| container::Style {
+                    background: *vars::BACKGROUND,
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: Radius::from(25),
+                    },
+                    shadow: iced::Shadow {
+                        color: Color::from_rgba8(0, 0, 0, 0.6),
+                        offset: Vector::ZERO,
+                        blur_radius: 1.0,
+                    },
+                    ..Default::default()
+                })
+                .height(Shrink)
+                .width(400)
+                .clip(true),
+        )
+        .style(|_| container::Style {
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: Radius::from(25),
+            },
+            shadow: iced::Shadow {
+                color: Color::from_rgba8(0, 0, 0, 0.25),
+                offset: Vector { x: 0.0, y: 38.0 },
+                blur_radius: 90.0,
+            },
+            ..Default::default()
+        })
+        .clip(true);
 
         // let window_wrapper = stack![if let Some(close_event) = params.wrapper_close_event {
         //     container(opaque(
@@ -186,5 +165,7 @@ impl<Message: Clone + 'static> Sonata<Message> {
         // }];
 
         // window_wrapper.into()
+
+        window.into()
     }
 }

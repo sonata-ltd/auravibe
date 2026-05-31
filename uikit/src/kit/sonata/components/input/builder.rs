@@ -14,7 +14,7 @@ use crate::kit::sonata::components::input::vars::{
     WIDTH_OUTER_RADIUS_MULTIBORDER,
 };
 use crate::kit::sonata::palette::COLOR_FOCUS;
-use crate::kit::sonata::utils::multi_border::{self, BorderLayer, multiborder};
+use crate::kit::sonata::utils::widgets::multi_border::{self, BorderLayer, multiborder};
 
 fn border_for_status(status: text_input::Status, is_error: bool) -> (Color, f32) {
     match (status, is_error) {
@@ -164,12 +164,7 @@ where
         error_msg: Option<&'b str>,
         is_error: bool,
     ) -> Element<'b, Message> {
-        if let Some(msg) = error_msg {
-            if is_error {
-                return Tooltip::new(input_el, msg).into();
-            }
-        }
-
-        input_el.into()
+        let show = is_error && error_msg.is_some();
+        Tooltip::new(input_el, error_msg.unwrap_or_default(), show).into()
     }
 }

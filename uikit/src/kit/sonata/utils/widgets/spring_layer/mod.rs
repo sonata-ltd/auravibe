@@ -1,5 +1,3 @@
-mod spring;
-
 use iced::{
     Element, Event, Length, Rectangle, Size, Transformation, Vector,
     advanced::{
@@ -10,7 +8,7 @@ use iced::{
     window,
 };
 
-use spring::{Spring, SpringParams};
+use crate::kit::sonata::utils::animations::spring::{Spring, SpringParams};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Config

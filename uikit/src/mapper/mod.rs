@@ -4,12 +4,8 @@ use iced::Element;
 
 use crate::{
     KitObj,
-    definition::{button::UiButton, input::UiInput, sidebar::UiSidebar},
+    definition::{button::UiButton, input::UiInput, sidebar::UiSidebar, window::UiWindow},
 };
-
-// pub mod button;
-
-// pub type MessageMapper<AppMsg> = Arc<dyn Fn(KitMessage) -> AppMsg + Send + Sync + 'static>;
 
 pub struct UIMapper<'a, Message> {
     kit: &'a KitObj<Message>,
@@ -39,16 +35,7 @@ where
         UiSidebar::new(self.kit, child)
     }
 
-    // pub fn window(&self, label: impl Into<String>) -> UiWindow<'a, Message> {
-    //     UiWindow::new(self.kit, label.into(), button("asdasd").into())
-    // }
-
-    // pub fn build(&self, btn: UiButton<Message>) -> Element<'static, Message> {
-    //     self.kit.constr_button(btn)
-    // }
-
-    // pub fn raw(&self, el: Element<'static, KitMessage>) -> Element<'a, AppMsg> {
-    //     let mapper = self.get_mapper();
-    //     el.map(move |kmsg| (mapper)(kmsg))
-    // }
+    pub fn window(&self, label: &'a str) -> UiWindow<'a, Message> {
+        UiWindow::new(self.kit, label.to_string())
+    }
 }

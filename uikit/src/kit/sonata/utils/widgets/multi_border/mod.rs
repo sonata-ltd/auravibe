@@ -9,8 +9,6 @@ use iced::{
     mouse, touch,
 };
 
-use crate::kit::sonata::utils::multi_border::focus::FocusDetector;
-
 mod draw;
 mod focus;
 mod types;
@@ -34,7 +32,7 @@ pub struct MultiBorder<'a, Message, Theme = iced::Theme, Renderer = iced::Render
     width: Option<Length>,
     height: Option<Length>,
     reserved_outer: Option<f32>,
-    focus_detector: FocusDetector,
+    focus_detector: focus::FocusDetector,
 }
 
 impl<'a, Message, Theme, Renderer> MultiBorder<'a, Message, Theme, Renderer>
@@ -52,7 +50,7 @@ where
             width: None,
             height: None,
             reserved_outer: None,
-            focus_detector: FocusDetector::default(),
+            focus_detector: focus::FocusDetector::default(),
         }
     }
 
@@ -268,15 +266,17 @@ where
         shell: &mut iced::advanced::Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        self.content.as_widget_mut().update(
-            &mut tree.children[0],
-            event,
-            layout.children().next().unwrap(),
-            cursor,
-            renderer,
-            shell,
-            viewport,
-        );
+        if let Some(child_layout) = layout.children().next() {
+            self.content.as_widget_mut().update(
+                &mut tree.children[0],
+                event,
+                child_layout,
+                cursor,
+                renderer,
+                shell,
+                viewport,
+            );
+        }
 
         let is_over = cursor.is_over(layout.bounds());
         let new_focus = self.resolve_focus(tree, Some(is_over));
@@ -319,13 +319,17 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> iced::advanced::mouse::Interaction {
-        self.content.as_widget().mouse_interaction(
-            &tree.children[0],
-            layout.children().next().unwrap(),
-            cursor,
-            viewport,
-            renderer,
-        )
+        if let Some(child_layout) = layout.children().next() {
+            self.content.as_widget().mouse_interaction(
+                &tree.children[0],
+                child_layout,
+                cursor,
+                viewport,
+                renderer,
+            )
+        } else {
+            iced::advanced::mouse::Interaction::default()
+        }
     }
 
     fn overlay<'b>(
@@ -338,7 +342,7 @@ where
     ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
         self.content.as_widget_mut().overlay(
             &mut tree.children[0],
-            layout.children().next().unwrap(),
+            layout.children().next()?,
             renderer,
             viewport,
             translation,

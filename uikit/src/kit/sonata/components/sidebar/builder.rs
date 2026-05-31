@@ -1,4 +1,4 @@
-use iced::{Element, widget::button};
+use iced::Element;
 
 use crate::{
     definition::sidebar::UiSidebar,

@@ -1,4 +1,4 @@
 pub mod button;
 pub mod input;
-// pub mod window;
 pub mod sidebar;
+pub mod window;

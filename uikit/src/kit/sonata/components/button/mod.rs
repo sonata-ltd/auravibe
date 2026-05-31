@@ -14,8 +14,8 @@ use crate::kit::sonata::components::button::vars::{
     PADDING_BUTTON_LG, PADDING_BUTTON_MD, PADDING_BUTTON_SM, RADIUS_BUTTON, SHADOW_PRIMARY,
     STYLE_DESTRUCTIVE, STYLE_PRIMARY, STYLE_SECONDARY, STYLE_TERTIARY,
 };
-use crate::kit::sonata::utils::multi_border::{Appearance, BorderLayer, multiborder};
 use crate::kit::sonata::utils::text::text::TextStyle;
+use crate::kit::sonata::utils::widgets::multi_border::{Appearance, BorderLayer, multiborder};
 
 mod vars;
 
@@ -73,6 +73,7 @@ impl<Message: Clone + 'static> Sonata<Message> {
         let UiButton {
             content,
             on_press,
+            on_press_maybe,
             props,
             width,
             ..
@@ -106,6 +107,10 @@ impl<Message: Clone + 'static> Sonata<Message> {
 
         if let Some(event) = on_press {
             btn = btn.on_press(event);
+        }
+
+        if let Some(event_maybe) = on_press_maybe {
+            btn = btn.on_press_maybe(event_maybe);
         }
 
         let focus_color = hier_style.focus_border_color;

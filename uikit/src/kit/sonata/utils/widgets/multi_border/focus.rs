@@ -3,8 +3,6 @@ use iced::{
     widget::text_input,
 };
 
-use crate::kit::sonata::utils::multi_border::MultiBorder;
-
 pub enum FocusDetector {
     ClickBased,
     TextInput,
@@ -17,7 +15,7 @@ impl Default for FocusDetector {
     }
 }
 
-impl<'a, Message, Theme, Renderer> MultiBorder<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer> super::MultiBorder<'a, Message, Theme, Renderer>
 where
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {

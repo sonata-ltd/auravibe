@@ -1,3 +1,3 @@
-pub mod multi_border;
-pub mod spring_layer;
+pub mod animations;
 pub mod text;
+pub mod widgets;

@@ -13,6 +13,7 @@ pub struct UiButton<'a, Message> {
     pub width: Length,
 
     pub on_press: Option<Message>,
+    pub on_press_maybe: Option<Option<Message>>,
     pub kit: &'a KitObj<Message>,
 }
 
@@ -58,6 +59,7 @@ where
         UiButton {
             content: Content::Text(""),
             on_press: None,
+            on_press_maybe: None,
             props: UiButtonProperties::default(),
             width: Length::Shrink,
             kit,
@@ -66,6 +68,11 @@ where
 
     pub fn on_press(mut self, event: Message) -> Self {
         self.on_press = Some(event);
+        self
+    }
+
+    pub fn on_press_maybe(mut self, option_event: Option<Message>) -> Self {
+        self.on_press_maybe = Some(option_event);
         self
     }
 

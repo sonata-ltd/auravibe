@@ -3,8 +3,6 @@ use iced::{
     advanced::{layout, renderer::Quad},
 };
 
-use crate::kit::sonata::utils::multi_border::{Appearance, BorderSide, MultiBorder};
-
 use super::BorderLayer;
 
 // Draws all `BorderSide::Outer` layers, ordered largest -> smallest
@@ -18,7 +16,7 @@ pub fn outer_borders<Renderer>(
     let mut rects: Vec<(BorderLayer, Rectangle)> = Vec::new();
     let mut cumulative = 0.0;
 
-    for layer in layers.iter().filter(|l| l.side == BorderSide::Outer) {
+    for layer in layers.iter().filter(|l| l.side == super::BorderSide::Outer) {
         cumulative += layer.offset;
         let expand = cumulative + layer.width;
 
@@ -48,7 +46,7 @@ pub fn outer_borders<Renderer>(
 
 pub fn background_full<Renderer>(
     renderer: &mut Renderer,
-    appearance: &Appearance,
+    appearance: &super::Appearance,
     content_bounds: Rectangle,
 ) where
     Renderer: iced::advanced::Renderer,
@@ -60,7 +58,7 @@ pub fn background_full<Renderer>(
     let outer_layers: Vec<_> = appearance
         .layers
         .iter()
-        .filter(|l| l.side == BorderSide::Outer)
+        .filter(|l| l.side == super::BorderSide::Outer)
         .collect();
 
     let (bg_bounds, radius) = if let Some(innermost) = outer_layers.last() {
@@ -106,7 +104,7 @@ pub fn background_full<Renderer>(
 }
 
 pub fn content<'a, Message, Theme, Renderer>(
-    widget: &MultiBorder<'a, Message, Theme, Renderer>,
+    widget: &super::MultiBorder<'a, Message, Theme, Renderer>,
     tree: &iced::advanced::widget::Tree,
     renderer: &mut Renderer,
     theme: &Theme,
@@ -117,15 +115,17 @@ pub fn content<'a, Message, Theme, Renderer>(
 ) where
     Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer,
 {
-    widget.content.as_widget().draw(
-        &tree.children[0],
-        renderer,
-        theme,
-        style,
-        layout.children().next().unwrap(),
-        cursor,
-        viewport,
-    );
+    if let Some(child_layout) = layout.children().next() {
+        widget.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            child_layout,
+            cursor,
+            viewport,
+        );
+    }
 }
 
 pub fn inner_borders<Renderer>(
@@ -137,7 +137,7 @@ pub fn inner_borders<Renderer>(
 {
     let mut cumulative = 0.0;
 
-    for layer in layers.iter().filter(|l| l.side == BorderSide::Inner) {
+    for layer in layers.iter().filter(|l| l.side == super::BorderSide::Inner) {
         cumulative += layer.offset;
 
         let inner_bounds = Rectangle {

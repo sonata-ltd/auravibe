@@ -1,10 +1,6 @@
 use iced::{
-    Color, Degrees, Element, Gradient, Length, Padding, Radians, Rectangle, Size,
-    advanced::{
-        Widget, layout, overlay,
-        renderer::Quad,
-        widget::{Tree, tree},
-    },
+    Color, Degrees, Element, Gradient, Length, Padding, Rectangle, Size,
+    advanced::{Widget, layout, overlay, renderer::Quad, widget::Tree},
     gradient::Linear,
 };
 
@@ -14,11 +10,6 @@ pub struct Sidebar<'a, Message, Theme, Renderer> {
     child: Vec<Element<'a, Message, Theme, Renderer>>,
     width: Length,
     height: Length,
-}
-
-#[derive(Default)]
-struct State {
-    extended: bool,
 }
 
 impl<'a, Message, Theme, Renderer> Sidebar<'a, Message, Theme, Renderer>
@@ -82,9 +73,9 @@ where
         Size::new(self.width, iced::Length::Fill)
     }
 
-    fn state(&self) -> iced::advanced::widget::tree::State {
-        tree::State::new(State::default())
-    }
+    // fn state(&self) -> iced::advanced::widget::tree::State {
+    //     tree::State::new(State::default())
+    // }
 
     fn children(&self) -> Vec<Tree> {
         self.child.iter().map(Tree::new).collect()

@@ -58,6 +58,13 @@ impl<'a, Message: Clone + 'static> Kit<'a, Message> for Sonata<Message> {
         Self::sidebar(&self, sidebar)
     }
 
+    fn constr_window(
+        &self,
+        params: crate::definition::window::UiWindow<'a, Message>,
+    ) -> Element<'a, Message> {
+        Self::window(&self, params)
+    }
+
     // fn constr_window(
     //     &self,
     //     window: crate::definition::window::UiWindow<'a, Message>,
