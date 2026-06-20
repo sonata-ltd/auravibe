@@ -1,12 +1,16 @@
 use iced::Element;
 
-use crate::definition::{button::UiButton, input::UiInput, sidebar::UiSidebar, window::UiWindow};
+use crate::definition::{
+    button::UiButton, content_stack::UiContentStack, input::UiInput, sidebar::UiSidebar,
+    window::UiWindow,
+};
 
 pub mod appstate;
 pub mod cached;
 pub mod definition;
 pub mod kit;
 pub mod mapper;
+pub mod registry;
 pub mod router;
 
 pub trait KitProvider: Clone + 'static {
@@ -23,4 +27,8 @@ pub trait Kit<'a, Message: Clone + 'static> {
     // Complicated
     fn constr_window(&self, window: UiWindow<'a, Message>) -> Element<'a, Message>;
     fn constr_sidebar(&self, sidebar: UiSidebar<'a, Message>) -> Element<'a, Message>;
+    fn constr_content_stack(
+        &self,
+        content_stack: UiContentStack<'a, Message>,
+    ) -> Element<'a, Message>;
 }

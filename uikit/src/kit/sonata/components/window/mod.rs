@@ -1,25 +1,25 @@
 use iced::{
     Background, Border, Color, Element,
     Length::{Fill, Shrink},
-    Renderer, Theme, Vector,
+    Theme, Vector,
     border::Radius,
-    widget::{Container, column, container, text},
+    widget::{Space, column, container, text},
 };
 
 use crate::{
+    cached::Cached,
     definition::window::UiWindow,
-    kit::sonata::{Sonata, utils::text::text::TextStyle},
+    kit::sonata::{
+        Sonata, components::content_stack::widget::ContentStack, utils::text::text::TextStyle,
+    },
 };
 
-mod content_stack;
 mod vars;
 
 impl<Message: Clone + 'static> Sonata<Message> {
     pub fn window<'a>(&self, params: UiWindow<'a, Message>) -> Element<'a, Message> {
-        let mut widget = content_stack::ContentStack::from_vec(
-            params.content_stack_childs.1,
-            params.content_stack_childs.0,
-        );
+        let mut widget =
+            ContentStack::from_vec(params.content_stack_childs.1, params.content_stack_childs.0);
 
         // if let Some(max_height) = params.max_height {
         //     widget = widget.max_height(max_height);
@@ -29,19 +29,22 @@ impl<Message: Clone + 'static> Sonata<Message> {
             widget = widget.width(width);
         }
 
-        let header: Container<'_, Message, Theme, Renderer> = container(
-            text(params.label)
-                .size(18)
-                .font(TextStyle::TextLgSm.build_font()),
-        )
-        .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(Color::TRANSPARENT)),
-            border: *vars::HEADER_BORDER,
-            shadow: *vars::HEADER_BOTTOM_SHADOW,
-            ..Default::default()
-        })
-        .width(Fill)
-        .padding(*vars::HEADER_PADDING);
+        let header = Cached::new(
+            params.header_texture_cache.clone(),
+            container(
+                text(params.label)
+                    .size(18)
+                    .font(TextStyle::TextLgSm.build_font()),
+            )
+            .style(|_: &Theme| container::Style {
+                background: Some(Background::Color(Color::TRANSPARENT)),
+                border: *vars::HEADER_BORDER,
+                shadow: *vars::HEADER_BOTTOM_SHADOW,
+                ..Default::default()
+            })
+            .width(Fill)
+            .padding(*vars::HEADER_PADDING),
+        );
 
         // let content = container(
         //     scrollable(
@@ -79,7 +82,17 @@ impl<Message: Clone + 'static> Sonata<Message> {
         //     bottom: 5.0,
         // });
 
-        let main_content = column![header, widget].width(Fill).clip(true);
+        let main_content = column![header, widget, {
+            let mut controls: Element<'_, Message> = Space::new().into();
+
+            if let Some(controls_child) = params.controls_child {
+                controls = controls_child;
+            }
+
+            controls
+        }]
+        .width(Fill)
+        .clip(true);
 
         // let controls_overlay = if let Some(controls) = params.controls_child {
         //     container(

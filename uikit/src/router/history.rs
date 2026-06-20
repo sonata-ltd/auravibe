@@ -3,7 +3,7 @@ pub struct NavigationHistory {
     cursor: usize,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum NavigationChange {
     Back,
     Forward,
@@ -24,13 +24,25 @@ impl NavigationHistory {
         }
     }
 
-    pub fn push_history(&mut self, page: usize) {
+    pub fn push_history(&mut self, page: usize) -> Vec<usize> {
+        let mut removed = Vec::new();
+
         if !self.history.is_empty() {
-            self.history.truncate(self.cursor + 1);
+            let cut = self.cursor + 1;
+
+            if cut < self.history.len() {
+                removed = self.history.split_off(cut);
+            }
         }
 
         self.history.push(page);
         self.cursor = self.history.len() - 1;
+
+        removed
+    }
+
+    pub fn contains(&self, page: usize) -> bool {
+        self.history.contains(&page)
     }
 
     pub fn nav_back(&mut self) -> Option<usize> {

@@ -60,9 +60,16 @@ impl<'a, Message: Clone + 'static> Kit<'a, Message> for Sonata<Message> {
 
     fn constr_window(
         &self,
-        params: crate::definition::window::UiWindow<'a, Message>,
+        window: crate::definition::window::UiWindow<'a, Message>,
     ) -> Element<'a, Message> {
-        Self::window(&self, params)
+        Self::window(&self, window)
+    }
+
+    fn constr_content_stack(
+        &self,
+        content_stack: crate::definition::content_stack::UiContentStack<'a, Message>,
+    ) -> Element<'a, Message> {
+        Self::content_stack(&self, content_stack)
     }
 
     // fn constr_window(

@@ -4,7 +4,10 @@ use iced::Element;
 
 use crate::{
     KitObj,
-    definition::{button::UiButton, input::UiInput, sidebar::UiSidebar, window::UiWindow},
+    definition::{
+        button::UiButton, content_stack::UiContentStack, input::UiInput, sidebar::UiSidebar,
+        window::UiWindow,
+    },
 };
 
 pub struct UIMapper<'a, Message> {
@@ -37,5 +40,9 @@ where
 
     pub fn window(&self, label: &'a str) -> UiWindow<'a, Message> {
         UiWindow::new(self.kit, label.to_string())
+    }
+
+    pub fn content_stack(&self) -> UiContentStack<'a, Message> {
+        UiContentStack::new(self.kit)
     }
 }

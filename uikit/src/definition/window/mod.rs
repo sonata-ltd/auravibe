@@ -1,6 +1,6 @@
 use std::f32;
 
-use iced::Element;
+use iced::{Element, TextureCache};
 
 use crate::KitObj;
 
@@ -14,6 +14,8 @@ pub struct UiWindow<'a, Message> {
     pub content_stack_childs: (usize, Vec<Element<'a, Message>>),
     pub max_height: Option<f32>,
     pub width: Option<f32>,
+
+    pub header_texture_cache: TextureCache,
 
     pub kit: &'a KitObj<Message>,
 }
@@ -34,14 +36,11 @@ where
             max_height: None,
             width: None,
 
+            header_texture_cache: TextureCache::new(),
+
             kit,
         }
     }
-
-    // pub fn child(mut self, child: impl Into<Element<'a, Message>>) -> Self {
-    //     self.content_stack_childs.push(child.into());
-    //     self
-    // }
 
     pub fn with_children(
         mut self,

@@ -12,9 +12,14 @@ use iced::{
     window,
 };
 
-use std::{cell::Cell, f32, sync::Arc, time::Instant};
+use std::{f32, sync::Arc, time::Instant};
 
-use crate::kit::sonata::utils::animations::spring::{Spring, SpringParams};
+use crate::kit::sonata::utils::animations::{
+    composition::composite_geometry,
+    spring::{Spring, SpringParams},
+};
+
+const MARGIN: u32 = 0;
 
 pub struct ContentStack<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
     id: Option<Id>,
@@ -34,20 +39,8 @@ struct Animation {
 #[derive(Debug)]
 struct State {
     content_index: ContentIndex,
-    index_update_done: bool,
     animation: Animation,
-    /// Content_stack's own compositor-layer slot — a *group layer*
-    /// whose cache is never recorded. It carries the slide transform
-    /// and the stack-bounds clip; its child slots (the page slots and
-    /// any nested `Cached` inside a page) compose inside its transform.
-    slot: Arc<LayerSlot>,
-    /// One slot per page. The slot's cache is recorded only while the
-    /// stack is animating (to keep a stable rasterization of each page
-    /// during the slide). When not animating the page is drawn inline
-    /// and these slots are *not* registered, so a stale recording from
-    /// a previous slide does not paint.
     page_slots: Vec<Arc<LayerSlot>>,
-    child_texture_needs_update: Cell<bool>,
     frame_builded_layouts: Vec<usize>,
 }
 
@@ -55,32 +48,29 @@ struct State {
 struct ContentIndex {
     next: Option<usize>,
     current: usize,
-    prev: Option<usize>,
 }
 
 impl State {
     fn new(childs_len: usize) -> Self {
         let mut page_slots = Vec::new();
         page_slots.resize_with(childs_len, || LayerSlot::new(TextureCache::new()));
+
         Self {
             content_index: ContentIndex {
                 next: None,
                 current: 0,
-                prev: None,
             },
-            index_update_done: true,
             animation: Animation {
                 spring: Spring::new(SpringParams::default(), 0.0),
                 is_animating: false,
                 last_tick: None,
             },
-            slot: LayerSlot::new(TextureCache::new()),
             page_slots,
-            child_texture_needs_update: Cell::new(false),
             frame_builded_layouts: Vec::new(),
         }
     }
 }
+
 impl<'a, Message, Theme, Renderer> ContentStack<'a, Message, Theme, Renderer>
 where
     Renderer: iced::advanced::Renderer,
@@ -147,6 +137,7 @@ where
         self
     }
 }
+
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
     for ContentStack<'a, Message, Theme, Renderer>
 where
@@ -168,10 +159,6 @@ where
 
         let state = tree.state.downcast_mut::<State>();
 
-        // Resize the per-page slot vec so it matches the (possibly
-        // newly-added or removed) child count. Without this, swapping
-        // in a different `with_children(...)` set would leave stale
-        // slots or panic on indexing.
         state
             .page_slots
             .resize_with(self.childs.len(), || LayerSlot::new(TextureCache::new()));
@@ -193,8 +180,15 @@ where
             state.animation.is_animating = true;
             state.animation.last_tick = None;
 
-            state.index_update_done = false;
-            state.child_texture_needs_update.set(true);
+            // Inavidate textures at diff
+            let from = state.content_index.current;
+            let to = safe_active_index;
+
+            for i in from.min(to)..=from.max(to) {
+                if let Some(slot) = state.page_slots.get(i) {
+                    slot.cache.invalidate();
+                }
+            }
         }
     }
 
@@ -228,26 +222,13 @@ where
 
         let mut indicies_to_layout = Vec::new();
 
-        if state.child_texture_needs_update.get() {
-            let current = state.content_index.current;
-            let target = state.content_index.next.unwrap_or(current);
-            let min_i = current.min(target);
-            let max_i = current.max(target);
+        // Measure only that camera seeing
+        if idx_a < self.childs.len() {
+            indicies_to_layout.push(idx_a);
+        }
 
-            for i in min_i..=max_i {
-                if i < self.childs.len() {
-                    indicies_to_layout.push(i);
-                }
-            }
-        } else {
-            // Measure only that camera seeing
-            if idx_a < self.childs.len() {
-                indicies_to_layout.push(idx_a);
-            }
-
-            if idx_b < self.childs.len() && idx_b != idx_a {
-                indicies_to_layout.push(idx_b);
-            }
+        if idx_b < self.childs.len() && idx_b != idx_a {
+            indicies_to_layout.push(idx_b);
         }
 
         let mut measured_nodes = Vec::with_capacity(indicies_to_layout.len());
@@ -334,9 +315,9 @@ where
     ) {
         let state = tree.state.downcast_mut::<State>();
 
-        if state.animation.is_animating && state.animation.last_tick.is_none() {
-            shell.request_redraw();
-        }
+        // if state.animation.is_animating && state.animation.last_tick.is_none() {
+        //     shell.request_redraw();
+        // }
 
         if let Event::Window(window::Event::RedrawRequested(now)) = event {
             tick_animation(
@@ -344,19 +325,12 @@ where
                 now,
                 shell,
                 Some(|| {
-                    state.index_update_done = true;
-
                     if let Some(next_idx) = state.content_index.next {
-                        state.content_index.prev = Some(state.content_index.current);
                         state.content_index.current = next_idx;
                         state.content_index.next = None;
                     }
                 }),
             );
-        }
-
-        if let Event::Window(window::Event::Resized(_)) = event {
-            state.child_texture_needs_update.set(true);
         }
 
         let bounds = layout.bounds();
@@ -371,29 +345,6 @@ where
         // typically 1–2 entries during a slide.
         let frame_layouts: Vec<usize> = state.frame_builded_layouts.clone();
 
-        if is_redraw {
-            // Register the group layer carrying the slide transform
-            // and stack-bounds clip. Nested layer-aware widgets (the
-            // `Cached` widget) inside any page will see this slot as
-            // their parent through `Shell::current_layer`.
-            let slide = Transformation::translate(-offset_x, 0.0);
-            let parent_id = shell.current_layer().map(|s| s.id());
-            state.slot.write(|d| {
-                d.transform = slide;
-                d.bounds = bounds;
-                d.clip_bounds = Some(bounds);
-                d.parent_id = parent_id;
-            });
-            shell.register_layer(state.slot.clone());
-            shell.push_layer(&state.slot);
-        }
-
-        let stack_slot_id = if is_redraw {
-            Some(state.slot.id())
-        } else {
-            None
-        };
-
         let mut layout_children = layout.children();
 
         for &i in &frame_layouts {
@@ -402,20 +353,40 @@ where
                 // settled, the page is drawn inline by `draw` and any
                 // stale page-slot cache should not appear in the
                 // compose pass.
-                let pushed_page = if is_redraw && animating {
+                let pushed_page = if is_redraw {
+                    let slide = Transformation::translate(-offset_x, 0.0);
+                    let scale = renderer.scale_factor().unwrap_or(1.0);
                     let page_bounds = child_layout.bounds();
+
+                    let geom = composite_geometry(MARGIN, page_bounds, scale, slide);
+
                     state.page_slots[i].write(|d| {
-                        d.transform = Transformation::IDENTITY;
-                        d.bounds = page_bounds;
-                        d.clip_bounds = None;
-                        d.parent_id = stack_slot_id;
+                        d.transform = geom.transform;
+                        d.bounds = geom.cache_bounds;
+                        d.clip_bounds = Some(bounds);
+                        d.parent_id = None;
                     });
-                    shell.register_layer(state.page_slots[i].clone());
-                    shell.push_layer(&state.page_slots[i]);
-                    true
+
+                    if animating {
+                        shell.register_layer(state.page_slots[i].clone());
+                        shell.push_layer(&state.page_slots[i]);
+
+                        true
+                    } else {
+                        false
+                    }
                 } else {
                     false
                 };
+
+                let snapshot = (!is_redraw).then(|| {
+                    (
+                        shell.redraw_request(),
+                        shell.event_status(),
+                        shell.is_layout_invalid(),
+                        shell.are_widgets_invalid(),
+                    )
+                });
 
                 self.childs[i].as_widget_mut().update(
                     &mut tree.children[i],
@@ -427,14 +398,23 @@ where
                     viewport,
                 );
 
+                if let Some((redraw_request, event_status, layout_invalid, widgets_invalid)) =
+                    snapshot
+                {
+                    let reacted = shell.redraw_request() != redraw_request
+                        || shell.event_status() != event_status
+                        || shell.is_layout_invalid() != layout_invalid
+                        || shell.are_widgets_invalid() != widgets_invalid;
+
+                    if reacted {
+                        state.page_slots[i].cache.invalidate();
+                    }
+                }
+
                 if pushed_page {
                     shell.pop_layer();
                 }
             }
-        }
-
-        if is_redraw {
-            shell.pop_layer();
         }
     }
 
@@ -490,20 +470,16 @@ where
         let offset_x = state.animation.spring.position * bounds.width;
         let translated_cursor = translate_cursor(cursor, offset_x);
 
-        if state.animation.is_animating {
-            // Record each visible page into its slot's cache. The
-            // compose pass draws the cached pages under the group
-            // layer's slide transform, and any nested `Cached` inside
-            // a page composes inside the page's identity transform
-            // (so it continues animating relative to the page during
-            // the slide).
-            let current = state.content_index.current;
-            let target = state.content_index.next.unwrap_or(current);
-            let min_i = current.min(target);
-            let max_i = current.max(target);
+        let current = state.content_index.current;
+        let target = state.content_index.next.unwrap_or(current);
+        let min_i = current.min(target);
+        let max_i = current.max(target);
 
-            let mut layout_children = layout.children();
+        let mut layout_children = layout.children();
+        let is_animating = state.animation.is_animating;
+        let scale = renderer.scale_factor().unwrap_or(1.0);
 
+        if is_animating {
             for &i in &state.frame_builded_layouts {
                 if let Some(child_layout) = layout_children.next() {
                     if i < min_i || i > max_i {
@@ -511,19 +487,22 @@ where
                     }
 
                     let child_bounds = child_layout.bounds();
-                    let size = Size::new(
-                        child_bounds.width.ceil().max(1.0) as u32,
-                        child_bounds.height.ceil().max(1.0) as u32,
-                    );
+
+                    let slide = Transformation::translate(-offset_x, 0.0);
+
+                    let geom = composite_geometry(MARGIN, child_bounds, scale, slide);
 
                     renderer.draw_to_texture(
                         TextureRecordMode::Flush,
                         &state.page_slots[i].cache,
-                        size,
-                        renderer.scale_factor().unwrap_or(1.0),
+                        geom.padded,
+                        geom.tex_scale,
                         |r| {
                             r.with_translation(
-                                Vector::new(-child_bounds.x, -child_bounds.y),
+                                Vector::new(
+                                    -child_bounds.x + MARGIN as f32,
+                                    -child_bounds.y + MARGIN as f32,
+                                ),
                                 |r| {
                                     let fake_viewport = Rectangle {
                                         x: child_bounds.x,
@@ -538,7 +517,7 @@ where
                                         theme,
                                         style,
                                         child_layout,
-                                        cursor,
+                                        translated_cursor,
                                         &fake_viewport,
                                     );
                                 },
@@ -547,55 +526,46 @@ where
                     );
                 }
             }
-
-            state.child_texture_needs_update.set(false);
-            // No inline composite here — `renderer.compose_layers`
-            // emits the slide transform, clip, and page-cache quads
-            // after the draw walk completes.
         } else {
-            // Not animating: draw the current page inline. The
-            // surrounding `with_layer` + `with_transformation(slide)`
-            // mirrors the compose-pass position for slot-registered
-            // children, so visible widgets land at the right place.
-            // Nested `Cached` widgets in `Layer` mode still record
-            // their caches during this inline draw and composite via
-            // the compose pass under `state.slot.transform` (slide).
             let max_idx = self.childs.len().saturating_sub(1) as f32;
             let spring_pos = state.animation.spring.position.clamp(0.0, max_idx);
             let idx_a = spring_pos.floor() as usize;
             let idx_b = spring_pos.ceil() as usize;
 
-            let slide = Vector::new(-offset_x, 0.0);
-
             renderer.with_layer(bounds, |renderer| {
-                renderer.with_translation(slide, |renderer| {
-                    let child_viewport = Rectangle {
-                        x: viewport.x + offset_x,
-                        y: viewport.y,
-                        width: viewport.width,
-                        height: viewport.height,
-                    };
-
-                    let mut layout_children = layout.children();
-
-                    for &i in &state.frame_builded_layouts {
-                        if let Some(child_layout) = layout_children.next() {
-                            if i != idx_a && i != idx_b {
-                                continue;
-                            }
-
-                            self.childs[i].as_widget().draw(
-                                &tree.children[i],
-                                renderer,
-                                theme,
-                                style,
-                                child_layout,
-                                translated_cursor,
-                                &child_viewport,
-                            );
+                let mut layout_children = layout.children();
+                for &i in &state.frame_builded_layouts {
+                    if let Some(child_layout) = layout_children.next() {
+                        if i != idx_a && i != idx_b {
+                            continue;
                         }
+
+                        let cb = child_layout.bounds();
+                        let snap_dx = (cb.x * scale).round() / scale - cb.x;
+                        let snap_dy = (cb.y * scale).round() / scale - cb.y;
+
+                        renderer.with_translation(
+                            Vector::new(snap_dx - offset_x, snap_dy),
+                            |renderer| {
+                                let child_viewport = Rectangle {
+                                    x: viewport.x + offset_x,
+                                    y: viewport.y,
+                                    width: viewport.width,
+                                    height: viewport.height,
+                                };
+                                self.childs[i].as_widget().draw(
+                                    &tree.children[i],
+                                    renderer,
+                                    theme,
+                                    style,
+                                    child_layout,
+                                    translated_cursor,
+                                    &child_viewport,
+                                );
+                            },
+                        );
                     }
-                });
+                }
             });
         }
     }
