@@ -21,10 +21,11 @@
 //!  - `Compositing` — switches between `Layer` (default, correct
 //!    nested animation) and `Bake` (source-order, inner pose baked
 //!    into outer texture).
-use std::{sync::Arc, time::Instant};
+use std::time::Instant;
 
 use iced::{
-    Border, Color, Element, Length, Subscription, Task, TextureCache, Theme, Transformation,
+    Border, Color, Element, Length, Settings, Subscription, Task, TextureCache, Theme,
+    Transformation,
     widget::{button, column, container, row, text, text_input},
     window,
 };
@@ -44,6 +45,7 @@ struct App {
     paused: bool,
     outer_cache: TextureCache,
     inner_cache: TextureCache,
+    second_cache: TextureCache,
     third_cache: TextureCache,
     fourth_cache: TextureCache,
     supersample: f32,
@@ -78,6 +80,7 @@ impl App {
                 paused: false,
                 outer_cache: TextureCache::new(),
                 inner_cache: TextureCache::new(),
+                second_cache: TextureCache::new(),
                 third_cache: TextureCache::new(),
                 fourth_cache: TextureCache::new(),
                 // Default 1×: with PixelSnap::Auto, a pure-translate animation
@@ -153,6 +156,7 @@ impl App {
                 // immediately.
                 self.outer_cache.invalidate();
                 self.inner_cache.invalidate();
+                self.second_cache.invalidate();
                 self.third_cache.invalidate();
                 self.fourth_cache.invalidate();
             }
@@ -199,7 +203,7 @@ impl App {
             .auto_supersample_on_motion(self.auto_motion_ss)
             .compositing_mode(self.compositing);
 
-        let inner_cached0_2 = Cached::new(self.inner_cache.clone(), inner_inner())
+        let inner_cached0_2 = Cached::new(self.second_cache.clone(), inner_inner())
             .transform(Transformation::IDENTITY)
             .supersample(self.supersample)
             .pixel_snap(self.snap_mode)

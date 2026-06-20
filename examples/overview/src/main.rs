@@ -1,27 +1,29 @@
+#![windows_subsystem = "windows"]
+
 use iced::{
-    Color, Element, Length, Subscription, Task, theme,
+    Color, Element, Font, Length, Subscription, Task, theme,
     widget::{container, row},
 };
 
 use iced_auravibe::{
     Kit, KitProvider,
-    appstate::AppState,
     definition::button::props::ButtonHierarchy,
-    kit::sonata::SonataProvider,
+    kit::sonata::{SonataProvider, utils::text::FONT_INTER},
     mapper::UIMapper,
+    registry::Registry,
     router::{Route, RouteMessage},
 };
 
 use crate::pages::{
     buttons::ButtonsPage, content_stack::ContentStackPage, example_page::ExamplePage,
-    inputs::InputsPage,
+    inputs::InputsPage, nested_sidebar::NestedSidebar,
 };
 
 mod pages;
 
 fn main() -> iced::Result {
     iced::application(
-        move || AppData::new(SonataProvider),
+        move || AppData::new(SonataProvider, Registry::new()),
         AppData::update,
         AppData::view,
     )
@@ -29,45 +31,61 @@ fn main() -> iced::Result {
         background_color: Color::WHITE,
         text_color: Color::BLACK,
     })
+    .font(FONT_INTER)
+    .default_font(Font::with_family("Inter"))
     .subscription(AppData::subscription)
     .run()
 }
 
 struct AppData<KitP: KitProvider> {
-    route: Route<KitP>,
+    router: Route<KitP>,
     uikit: Box<dyn for<'k> Kit<'k, Message>>,
 }
 
-#[derive(Clone)]
+struct AppDataRegistry<KitP: KitProvider> {
+    provider: KitP,
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
     Navigate(usize),
     RouteUpdate(RouteMessage),
 }
 
-impl<KitP: KitProvider> AppData<KitP> {
-    fn new(provider: KitP) -> (Self, Task<Message>) {
+impl<KitP: KitProvider + Send + Sync> AppData<KitP> {
+    fn new(provider: KitP, registry: Registry) -> (Self, Task<Message>) {
         let uikit = provider.provide::<Message>();
 
-        let app_state = AppState::new();
-        let mut route = Route::<KitP>::new(app_state, provider.clone());
+        registry.register(AppDataRegistry {
+            provider: provider.clone(),
+        });
+
+        let mut route = Route::<KitP>::new(registry, provider.clone());
 
         route.add::<ButtonsPage>("Buttons");
         route.add::<InputsPage>("Inputs");
         route.add::<ExamplePage>("Example Page");
         route.add::<ContentStackPage>("Content Stack");
+        route.add::<NestedSidebar<KitP>>("Nested Sidebar");
 
-        (Self { route, uikit }, Task::none())
+        (
+            Self {
+                router: route,
+                uikit,
+            },
+            Task::none(),
+        )
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch(vec![self.route.subscribe().map(Message::RouteUpdate)])
+        Subscription::batch(vec![self.router.subscribe().map(Message::RouteUpdate)])
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Navigate(id) => self.route.navigate_id(id),
+            Message::Navigate(id) => self.router.navigate_id(id),
             Message::RouteUpdate(msg) => {
-                return self.route.update(msg).map(Message::RouteUpdate);
+                return self.router.update(msg).map(Message::RouteUpdate);
             }
         }
 
@@ -80,11 +98,15 @@ impl<KitP: KitProvider> AppData<KitP> {
 
     fn view(&self) -> Element<'_, Message> {
         let kit = self.kit_mapper();
-        let content = self.route.content().map(Message::RouteUpdate);
-        let current = self.route.current();
+
+        let content_options = self.router.content();
+
+        let content = content_options.0.map(Message::RouteUpdate);
+        let override_container = content_options.1;
+        let current = self.router.current();
 
         let sidebar_items: Vec<Element<'_, Message>> = self
-            .route
+            .router
             .labels()
             .map(|(id, label)| {
                 kit.button()
@@ -100,10 +122,17 @@ impl<KitP: KitProvider> AppData<KitP> {
             })
             .collect();
 
-        row![
-            kit.sidebar(sidebar_items).width(200),
-            container(content).padding(15)
-        ]
+        row![kit.sidebar(sidebar_items).width(200), {
+            let widget;
+
+            if override_container {
+                widget = content;
+            } else {
+                widget = container(content).padding(15).into();
+            }
+
+            widget
+        }]
         .into()
     }
 }

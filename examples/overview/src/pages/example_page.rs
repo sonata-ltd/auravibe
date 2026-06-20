@@ -1,11 +1,11 @@
 use iced::widget::text;
 use iced::{Element, widget::column};
 use iced_auravibe::Kit;
-use iced_auravibe::appstate::AppState;
+use iced_auravibe::registry::Registry;
 use iced_auravibe::router::action::Action;
 use iced_auravibe::router::page::PageView;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Message {}
 
 pub struct ExamplePage {}
@@ -14,7 +14,7 @@ impl PageView for ExamplePage {
     type Message = Message;
     type NavOptions = ();
 
-    fn new(_: Box<dyn for<'k> Kit<'k, Self::Message>>, _: AppState) -> Self {
+    fn new(_: Box<dyn for<'k> Kit<'k, Self::Message>>, _: Registry) -> Self {
         Self {}
     }
 

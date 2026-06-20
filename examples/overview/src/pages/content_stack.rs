@@ -1,22 +1,22 @@
 use std::sync::Arc;
 
-use iced::Length::{Fill, Shrink};
+use iced::Length::{self, Fill, Shrink};
 use iced::widget::{container, row, scrollable, space, text};
-use iced::{Alignment, Color, Padding};
+use iced::{Alignment, Color, Padding, TextureCache};
 use iced::{Element, widget::column};
-use iced_auravibe::appstate::AppState;
+use iced_auravibe::cached::Cached;
 use iced_auravibe::kit::sonata::utils::text::text::TextStyle;
 use iced_auravibe::kit::sonata::utils::widgets::multi_border::MultiBorderExt;
+use iced_auravibe::registry::Registry;
 use iced_auravibe::router::action::Action;
 use iced_auravibe::router::page::PageView;
 use iced_auravibe::{Kit, definition::button::props::ButtonHierarchy, mapper::UIMapper};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Message {
     Back,
     Next,
     ShowBorders,
-    None,
     PathToBinaryUpdate(String),
     ArchUpdate(String),
 }
@@ -33,13 +33,15 @@ pub struct ContentStackPage {
     vendor: String,
     java_home: String,
     architecture: String,
+
+    childs_texture: TextureCache,
 }
 
 impl PageView for ContentStackPage {
     type Message = Message;
     type NavOptions = ();
 
-    fn new(kit: Box<dyn for<'k> Kit<'k, Self::Message>>, _: AppState) -> Self {
+    fn new(kit: Box<dyn for<'k> Kit<'k, Self::Message>>, _: Registry) -> Self {
         Self {
             kit,
             content_stack_index: 0,
@@ -51,6 +53,7 @@ impl PageView for ContentStackPage {
             vendor: String::new(),
             java_home: String::new(),
             architecture: String::from("x86"),
+            childs_texture: TextureCache::new(),
         }
     }
 
@@ -70,7 +73,6 @@ impl PageView for ContentStackPage {
                 self.show_borders = !self.show_borders;
                 self.content_stack_index = 0;
             }
-            Message::None => {}
             Message::PathToBinaryUpdate(s) => self.path_to_binary = s,
             Message::ArchUpdate(s) => self.architecture = s,
         }
@@ -84,27 +86,34 @@ impl PageView for ContentStackPage {
     fn view<'a>(&'a self) -> Element<'a, Message> {
         let kit = Arc::new(UIMapper::new(&self.kit));
 
-        let content_stack = kit.window("Add External Runtime").with_children(
-            self.content_stack_index,
-            [
-                screen1(&self, kit.clone()).into(),
-                screen2(&self, kit.clone()).into(),
-            ]
-            .into(),
-        );
+        let content_stack = kit
+            .window("Add External Runtime")
+            .with_children(
+                self.content_stack_index,
+                [
+                    screen1(&self, kit.clone()).into(),
+                    screen2(&self, kit.clone()).into(),
+                ]
+                .into(),
+            )
+            .controls_child(Cached::new(
+                self.childs_texture.clone(),
+                row![
+                    space().width(Fill),
+                    kit.button()
+                        .label("Cancel")
+                        .hier(ButtonHierarchy::Secondary)
+                        .on_press(Message::Back),
+                    kit.button().label("Apply").on_press(Message::Next),
+                ]
+                .spacing(10)
+                .padding(15),
+            ));
 
         column![
             row![
                 kit.button()
-                    .label("Back")
-                    .on_press_maybe(self.back_button_active.then_some(Message::Back))
-                    .width(iced::Length::Fill),
-                kit.button()
-                    .label("Next")
-                    .on_press_maybe(self.next_button_active.then_some(Message::Next))
-                    .width(iced::Length::Fill),
-                kit.button()
-                    .label("Show widget borders")
+                    .label("Toggle widget borders")
                     .on_press(Message::ShowBorders)
                     .width(Shrink)
                     .hier(ButtonHierarchy::Secondary)
@@ -124,8 +133,11 @@ impl PageView for ContentStackPage {
                 el
             })
             .align_y(Alignment::Center)
+            .align_x(Alignment::Center)
             .height(Fill)
+            .width(Length::Fill),
         ]
+        .width(Length::Fill)
         .spacing(15)
         .into()
     }
@@ -143,16 +155,6 @@ fn screen1<'a>(
                 .on_input(Message::PathToBinaryUpdate),
         ]
         .padding(15),
-        row![
-            space().width(Fill),
-            kit.button()
-                .label("Cancel")
-                .hier(ButtonHierarchy::Secondary)
-                .on_press(Message::None),
-            kit.button().label("Apply").on_press(Message::Next),
-        ]
-        .padding(15)
-        .spacing(10),
     ]
     .into()
 }
@@ -196,16 +198,6 @@ fn screen2<'a>(
         ]
         .spacing(20)
         .padding(15),
-        row![
-            space().width(Fill),
-            kit.button()
-                .label("Cancel")
-                .hier(ButtonHierarchy::Secondary)
-                .on_press(Message::Back),
-            kit.button().label("Apply").on_press(Message::None),
-        ]
-        .padding(15)
-        .spacing(10)
     ])
     .into()
 }
