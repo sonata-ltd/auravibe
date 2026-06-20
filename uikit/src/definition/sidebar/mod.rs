@@ -5,7 +5,10 @@ use crate::KitObj;
 pub struct UiSidebar<'a, Message> {
     pub content: Vec<Element<'a, Message>>,
     pub width: Length,
-    pub expand: bool,
+    pub collapsed: bool,
+    pub show_builtin_header_controls: bool,
+
+    pub collpase_toggle_message: Option<Message>,
 
     pub kit: &'a KitObj<Message>,
 }
@@ -18,7 +21,10 @@ where
         UiSidebar {
             content: children,
             width: Length::Fill,
-            expand: true,
+            collapsed: false,
+            show_builtin_header_controls: false,
+
+            collpase_toggle_message: None,
 
             kit,
         }
@@ -26,6 +32,21 @@ where
 
     pub fn width(mut self, width: impl Into<Length>) -> Self {
         self.width = width.into();
+        self
+    }
+
+    pub fn collapse(mut self, collapsed: bool) -> Self {
+        self.collapsed = collapsed;
+        self
+    }
+
+    pub fn show_header(mut self, show: bool) -> Self {
+        self.show_builtin_header_controls = show;
+        self
+    }
+
+    pub fn on_toggle(mut self, msg: Message) -> Self {
+        self.collpase_toggle_message = Some(msg);
         self
     }
 }

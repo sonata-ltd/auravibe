@@ -1,19 +1,63 @@
 use iced::{
-    Color, Degrees, Element, Gradient, Length, Padding, Rectangle, Size,
-    advanced::{Widget, layout, overlay, renderer::Quad, widget::Tree},
+    Color, Degrees, Element, Event, Gradient, Length, Padding, Rectangle, Size, Vector,
+    advanced::{
+        Widget, layout, overlay,
+        renderer::Quad,
+        svg,
+        widget::{Tree, tree},
+    },
     gradient::Linear,
+    mouse, window,
 };
 
-use crate::kit::sonata::components::sidebar::vars::COLOR_SIDEBAR_BACKGROUND;
+use crate::kit::sonata::{
+    components::sidebar::vars::COLOR_SIDEBAR_BACKGROUND,
+    utils::animations::{
+        Animation,
+        spring::{Spring, SpringParams},
+        tick_animation,
+    },
+};
+
+mod icons;
+
+const HEADER_HEIGHT: f32 = 44.0;
 
 pub struct Sidebar<'a, Message, Theme, Renderer> {
     child: Vec<Element<'a, Message, Theme, Renderer>>,
     width: Length,
+    min_width: f32,
     height: Length,
+    collapsed: bool,
+    header_height: f32,
+    show_header: bool,
+    on_toggle: Option<Message>,
+}
+
+#[derive(Debug)]
+pub struct State {
+    collapsed: bool,
+    animation: Animation,
+}
+
+impl State {
+    pub fn new(collapsed: bool) -> Self {
+        let desired = if collapsed { 1.0 } else { 0.0 };
+
+        Self {
+            collapsed,
+            animation: Animation {
+                spring: Spring::new(SpringParams::default(), desired),
+                is_animating: false,
+                last_tick: None,
+            },
+        }
+    }
 }
 
 impl<'a, Message, Theme, Renderer> Sidebar<'a, Message, Theme, Renderer>
 where
+    Message: Clone,
     Renderer: iced::advanced::Renderer,
 {
     pub fn new() -> Self {
@@ -54,7 +98,12 @@ where
         Self {
             child,
             width: Length::Shrink,
+            min_width: 50.0,
             height: Length::Fill,
+            collapsed: false,
+            header_height: HEADER_HEIGHT,
+            show_header: false,
+            on_toggle: None,
         }
     }
 
@@ -62,20 +111,60 @@ where
         self.width = width.into();
         self
     }
+
+    pub fn collapsed(mut self, collapsed: bool) -> Self {
+        self.collapsed = collapsed;
+        self
+    }
+
+    pub fn show_header(mut self) -> Self {
+        self.show_header = true;
+        self
+    }
+
+    pub fn on_toggle(mut self, msg: Message) -> Self {
+        self.on_toggle = Some(msg);
+        self
+    }
+
+    fn get_header_height(&self) -> f32 {
+        if self.show_header {
+            self.header_height
+        } else {
+            0.0
+        }
+    }
+
+    fn toggle_bounds(&self, bounds: Rectangle) -> Rectangle {
+        let icon_size = 20.0;
+        let pad = (self.header_height - icon_size) / 2.0;
+
+        Rectangle {
+            x: bounds.x + pad,
+            y: bounds.y + pad,
+            width: icon_size,
+            height: icon_size,
+        }
+    }
 }
 
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
     for Sidebar<'a, Message, Theme, Renderer>
 where
-    Renderer: iced::advanced::Renderer,
+    Message: Clone,
+    Renderer: iced::advanced::Renderer + iced::advanced::svg::Renderer,
 {
     fn size(&self) -> iced::Size<iced::Length> {
         Size::new(self.width, iced::Length::Fill)
     }
 
-    // fn state(&self) -> iced::advanced::widget::tree::State {
-    //     tree::State::new(State::default())
-    // }
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<State>()
+    }
+
+    fn state(&self) -> iced::advanced::widget::tree::State {
+        tree::State::new(State::new(self.collapsed))
+    }
 
     fn children(&self) -> Vec<Tree> {
         self.child.iter().map(Tree::new).collect()
@@ -116,6 +205,37 @@ where
         shell: &mut iced::advanced::Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        let state = tree.state.downcast_mut::<State>();
+
+        if let Event::Window(window::Event::RedrawRequested(now)) = event {
+            tick_animation(&mut state.animation, now, shell, None::<fn()>);
+        }
+
+        if self.show_header {
+            if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
+                let rect = self.toggle_bounds(layout.bounds());
+
+                if cursor.is_over(rect) {
+                    state.collapsed = !state.collapsed;
+
+                    let target = if state.collapsed { 1.0 } else { 0.0 };
+                    state.animation.spring.set_target(target);
+                    state.animation.is_animating = true;
+                    state.animation.last_tick = None;
+
+                    shell.invalidate_layout();
+                    shell.request_redraw();
+                    shell.capture_event();
+
+                    if let Some(msg) = self.on_toggle.clone() {
+                        shell.publish(msg);
+                    }
+
+                    return;
+                }
+            }
+        }
+
         for ((child, tree), layout) in self
             .child
             .iter_mut()
@@ -134,18 +254,49 @@ where
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        layout::flex::resolve(
+        let state = tree.state.downcast_mut::<State>();
+
+        let full_width = limits
+            .resolve(self.width, self.height, Size::new(self.min_width, 0.0))
+            .width;
+        let spring_pos = state.animation.spring.position.clamp(0.0, 1.0);
+        let width = interpolate(full_width, self.min_width, spring_pos);
+
+        let current_header_height = self.get_header_height();
+
+        let body_limits = layout::Limits::new(
+            Size::new(
+                limits.min().width,
+                (limits.min().height - current_header_height).max(0.0),
+            ),
+            Size::new(
+                limits.max().width,
+                (limits.max().height - current_header_height).max(0.0),
+            ),
+        );
+
+        let body = layout::flex::resolve(
             layout::flex::Axis::Vertical,
             renderer,
-            &limits,
-            self.width,
+            &body_limits,
+            width.into(),
             self.height,
             Padding::from(10),
             5.0,
             iced::Alignment::Start,
             &mut self.child,
             &mut tree.children,
-        )
+        );
+
+        let body_h = body.size().height;
+
+        let children: Vec<layout::Node> = body
+            .children()
+            .iter()
+            .cloned()
+            .map(|n| n.translate(Vector::new(0.0, current_header_height)))
+            .collect();
+        layout::Node::with_children(Size::new(width, current_header_height + body_h), children)
     }
 
     fn draw(
@@ -158,6 +309,7 @@ where
         cursor: iced::advanced::mouse::Cursor,
         viewport: &iced::Rectangle,
     ) {
+        let state = tree.state.downcast_ref::<State>();
         let bounds = layout.bounds();
 
         // Draw background
@@ -182,6 +334,35 @@ where
             ),
         );
 
+        if self.show_header {
+            let rect = self.toggle_bounds(bounds);
+
+            if cursor.is_over(rect) {
+                renderer.fill_quad(
+                    Quad {
+                        bounds: rect,
+                        border: iced::Border {
+                            radius: 4.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.06),
+                );
+            }
+
+            renderer.draw_svg(
+                svg::Svg {
+                    handle: icons::chevron(state.collapsed),
+                    color: None,
+                    rotation: 0.0.into(),
+                    opacity: 1.0,
+                },
+                rect,
+                *viewport,
+            );
+        }
+
         for ((child, tree), layout) in self
             .child
             .iter()
@@ -203,6 +384,10 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> iced::advanced::mouse::Interaction {
+        if self.show_header && cursor.is_over(self.toggle_bounds(layout.bounds())) {
+            return mouse::Interaction::Pointer;
+        }
+
         self.child
             .iter()
             .zip(&tree.children)
@@ -238,11 +423,16 @@ where
 impl<'a, Message, Theme, Renderer> From<Sidebar<'a, Message, Theme, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
-    Message: 'a,
+    Message: Clone + 'a,
     Theme: 'a,
-    Renderer: iced::advanced::Renderer + 'a,
+    Renderer: iced::advanced::Renderer + iced::advanced::svg::Renderer + 'a,
 {
     fn from(sidebar: Sidebar<'a, Message, Theme, Renderer>) -> Self {
         Self::new(sidebar)
     }
+}
+
+#[inline]
+fn interpolate(current: f32, next: f32, pos: f32) -> f32 {
+    current + (next - current) * pos
 }
