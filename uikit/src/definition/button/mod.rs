@@ -21,6 +21,7 @@ type Label<'a> = &'a str;
 type SvgSource<'a> = Svg<'a, Theme>;
 
 pub enum Content<'a> {
+    None,
     Text(Label<'a>),
     Icon(SvgSource<'a>),
     Combined {
@@ -35,7 +36,7 @@ impl<'a> Content<'a> {
             Content::Icon(i) => self = Content::Combined { icon: i, text },
             Content::Combined { icon, .. } => self = Content::Combined { icon, text },
             _ => self = Content::Text(text),
-        };
+        }
 
         self
     }
@@ -57,7 +58,7 @@ where
 {
     pub fn new(kit: &'a KitObj<Message>) -> Self {
         UiButton {
-            content: Content::Text(""),
+            content: Content::None,
             on_press: None,
             on_press_maybe: None,
             props: UiButtonProperties::default(),

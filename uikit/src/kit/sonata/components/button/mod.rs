@@ -1,7 +1,7 @@
 use iced::Alignment::Center;
 use iced::Length::Fill;
 use iced::widget::button::Status;
-use iced::widget::text;
+use iced::widget::{Space, text};
 use iced::widget::{Text, button, row};
 use iced::{Border, Element, Padding, Renderer, Shadow, Theme, widget};
 
@@ -39,6 +39,7 @@ fn padding_for(size: &ButtonSize, content_type: &Content) -> Padding {
         Content::Text(_) => padding_hier.default,
         Content::Icon(_) => padding_hier.icon_only,
         Content::Combined { .. } => padding_hier.combined,
+        Content::None => padding_hier.default,
     }
 }
 
@@ -85,6 +86,7 @@ impl<Message: Clone + 'static> Sonata<Message> {
         let is_disabled = on_press.is_none();
 
         let padding = padding_for(&size, &content);
+
         let content: Element<'a, Message> = match content {
             Content::Text(t) => text(t)
                 .font(TextStyle::build_font(TextStyle::TextSmM))
@@ -98,6 +100,7 @@ impl<Message: Clone + 'static> Sonata<Message> {
 
                 row![icon.height(20).width(20), text].spacing(5).into()
             }
+            Content::None => Space::new().into(),
         };
 
         let mut btn = button(content)
