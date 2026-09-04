@@ -218,7 +218,3 @@ Measurements are in
 [BENCHMARKS.md](https://github.com/sonata-ltd/luminate/blob/master/texture_cache/BENCHMARKS.md);
 changes in the workspace
 [CHANGELOG](https://github.com/sonata-ltd/luminate/blob/master/CHANGELOG.md).
-
-## MSRV
-
-Rust 1.88, following iced 0.14.

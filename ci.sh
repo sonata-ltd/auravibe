@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local mirror of .github/workflows/ci.yml for the host platform: the `stable`
-# job, the Linux slice of `per-crate`, `deny` and `package`. `msrv`, `semver`,
+# job, the Linux slice of `per-crate`, `deny` and `package`. `semver`,
 # `gpu` (and the macOS/Windows slices) run only on GitHub.
 # Runs inside the flake's dev shell so wgpu/winit system libraries are present.
 set -euo pipefail
@@ -47,4 +47,4 @@ run cargo deny check
 # from its packaged files (fonts and OFL.txt included).
 run cargo publish --dry-run -p iced_animate -p iced_texture_cache -p iced_page_router -p iced_luminate --allow-dirty
 
-echo "ci: ok (MSRV 1.88 is checked on GitHub: 'cargo +1.88 check --workspace --all-targets --all-features')"
+echo "ci: ok"

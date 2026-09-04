@@ -147,7 +147,3 @@ the demos every 1.5 s). The examples live in the
 [repository](https://github.com/sonata-ltd/luminate/tree/master/animate/examples)
 and are not part of the published crate. Changes are listed in the workspace
 [CHANGELOG](https://github.com/sonata-ltd/luminate/blob/master/CHANGELOG.md).
-
-## MSRV
-
-Rust 1.88, following iced 0.14.

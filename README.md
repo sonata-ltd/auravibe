@@ -2,7 +2,6 @@
 
 [![CI](https://github.com/sonata-ltd/luminate/actions/workflows/ci.yml/badge.svg)](https://github.com/sonata-ltd/luminate/actions/workflows/ci.yml)
 [![License: LGPL 2.1 or later](https://img.shields.io/badge/license-LGPL--2.1%2B-blue.svg)](https://github.com/sonata-ltd/luminate/blob/master/LICENSE)
-![MSRV 1.88](https://img.shields.io/badge/MSRV-1.88-orange.svg)
 
 Animation, texture caching, page routing, and a design kit for
 [iced](https://iced.rs) 0.14. Each crate is a normal dependency and does not
@@ -88,7 +87,7 @@ nix develop      # dev shell with the wgpu/winit system libraries
 `./ci.sh` mirrors the `stable`, Linux `per-crate`, `deny`, and
 `package` jobs of the GitHub workflow, including the multi-package
 `cargo publish --dry-run`. The workflow also runs `per-crate` on
-Linux, macOS and Windows, the MSRV (`msrv`) and `cargo-semver-checks`
+Linux, macOS and Windows, and `cargo-semver-checks`
 (`semver`) jobs, and `gpu`, which repeats the tests on wgpu over Mesa's
 software Vulkan driver.
 
@@ -99,11 +98,6 @@ Design notes live in
 Measurements are in
 [texture_cache/BENCHMARKS.md](https://github.com/sonata-ltd/luminate/blob/master/texture_cache/BENCHMARKS.md);
 changes in [CHANGELOG.md](https://github.com/sonata-ltd/luminate/blob/master/CHANGELOG.md).
-
-## MSRV
-
-Rust 1.88, following iced 0.14. Breaking changes are acceptable before 1.0
-and are listed in the changelog.
 
 ## License
 

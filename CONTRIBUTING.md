@@ -4,7 +4,7 @@
 
 Run `./ci.sh`. It enters `nix develop` and runs formatting, Clippy with
 warnings denied, tests, README doctests, rustdoc, feature checks, and
-`cargo deny`. CI also checks Rust 1.88, other operating systems, and
+`cargo deny`. CI also checks other operating systems, and
 `cargo-semver-checks` on tags. Never force-push shared branches.
 
 ## Commits
