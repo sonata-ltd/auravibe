@@ -200,13 +200,13 @@ fn visible_indices(
         }
     }
     // `None` sorts first; push it to the back so `laid_out_indices` sees a prefix.
-    set.sort_unstable_by_key(|slot| slot.map_or(usize::MAX, |i| i));
+    set.sort_unstable_by_key(|slot| slot.unwrap_or(usize::MAX));
     for i in 1..set.len() {
         if set[i].is_some() && set[i] == set[i - 1] {
             set[i] = None;
         }
     }
-    set.sort_unstable_by_key(|slot| slot.map_or(usize::MAX, |i| i));
+    set.sort_unstable_by_key(|slot| slot.unwrap_or(usize::MAX));
     set
 }
 

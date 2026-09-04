@@ -636,11 +636,10 @@ mod cpu {
     /// handle API.
     pub(crate) fn pixmap_to_rgba(premultiplied_bgra: &[u8]) -> Vec<u8> {
         let mut out = vec![0u8; premultiplied_bgra.len()];
+        let (out_chunks, out_rem) = out.as_chunks_mut::<4>();
+        debug_assert!(out_rem.is_empty());
 
-        for (src, dst) in premultiplied_bgra
-            .chunks_exact(4)
-            .zip(out.chunks_exact_mut(4))
-        {
+        for (src, dst) in premultiplied_bgra.as_chunks::<4>().0.iter().zip(out_chunks) {
             let (b, g, r, a) = (src[0], src[1], src[2], src[3]);
 
             match a {
