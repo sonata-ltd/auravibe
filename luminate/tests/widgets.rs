@@ -187,7 +187,7 @@ fn bubble_fill() -> [u8; 3] {
 /// `fill`.
 fn extent(rgba: &[u8], width: usize, fill: [u8; 3]) -> Option<(usize, usize, usize, usize)> {
     let mut span: Option<(usize, usize, usize, usize)> = None;
-    for (i, px) in rgba.chunks_exact(4).enumerate() {
+    for (i, px) in rgba.as_chunks::<4>().0.iter().enumerate() {
         let close = px[..3].iter().zip(fill).all(|(a, b)| a.abs_diff(b) <= 2);
         if close {
             let (x, y) = (i % width, i / width);

@@ -688,7 +688,7 @@ where
 mod tests {
 
     use iced::advanced::widget::Tree;
-    use iced::advanced::{Widget as _, layout, renderer::Headless};
+    use iced::advanced::{layout, renderer::Headless};
     use iced::time::Instant;
     use iced::widget::text;
     use iced::{Point, Size};
