@@ -2,7 +2,8 @@
 
 `examples/cache_benchmark.rs` reports the interval between `window::frames()`
 callbacks over the last 120 frames. The grid size, the cached toggle, the
-`PixelSnap` mode and supersample-in-motion are controls in the window;
+`PixelSnap` mode, the `FilterQuality` tier and supersample-in-motion are
+controls in the window;
 `BENCH_LOG=1` prints the statistics line to stderr every 120 frames.
 
 Reproduce:

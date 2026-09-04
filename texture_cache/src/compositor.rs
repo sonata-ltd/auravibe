@@ -132,6 +132,7 @@ mod gpu {
             {
                 Ok((device, queue)) => {
                     let max_texture_dimension = device.limits().max_texture_dimension_2d;
+                    let filter_quality = crate::filter::auto(adapter.get_info().device_type);
                     let engine =
                         Engine::new(adapter, device.clone(), queue, format, antialiasing, shell);
 
@@ -140,6 +141,7 @@ mod gpu {
                         device,
                         format,
                         max_texture_dimension,
+                        filter_quality,
                     });
                 }
                 Err(error) => errors.push(format!("{required_limits:?}: {error}")),

@@ -9,7 +9,7 @@
 use iced_core::Renderer as _;
 use iced_core::renderer::{Headless, Quad};
 use iced_core::{Color, Point, Rectangle, Size, Transformation};
-use iced_texture_cache::{Backend, Record, Renderer, TextureCache, TextureRenderer};
+use iced_texture_cache::{Backend, FilterQuality, Record, Renderer, TextureCache, TextureRenderer};
 
 const CANVAS: Size<u32> = Size {
     width: 8,
@@ -46,13 +46,26 @@ fn record_red(renderer: &mut Renderer, cache: &TextureCache, scale_factor: f32) 
 
 /// Composites `cache` at (2, 2) over white and returns the screenshot.
 fn composite(renderer: &mut Renderer, cache: &TextureCache, opacity: f32) -> Vec<u8> {
+    composite_with(renderer, cache, opacity, FilterQuality::Bilinear, 0.0)
+}
+
+/// Composites `cache` at (2, 2) shifted by `offset` on both axes, through
+/// `filter`, over white.
+fn composite_with(
+    renderer: &mut Renderer,
+    cache: &TextureCache,
+    opacity: f32,
+    filter: FilterQuality,
+    offset: f32,
+) -> Vec<u8> {
     renderer.reset(canvas());
     renderer.draw_cached(
         cache,
-        Rectangle::new(Point::new(2.0, 2.0), Size::new(4.0, 4.0)),
+        Rectangle::new(Point::new(2.0 + offset, 2.0 + offset), Size::new(4.0, 4.0)),
         canvas(),
         Transformation::IDENTITY,
         opacity,
+        filter,
     );
     renderer.screenshot(CANVAS, 1.0, Color::WHITE)
 }
@@ -196,7 +209,14 @@ mod tiny_skia {
 
         let record = renderer.record(&outer, TEXTURE, 1.0, |r| {
             assert_eq!(record_red(r, &inner, 1.0), Record::Fresh);
-            r.draw_cached(&inner, quad, quad, Transformation::IDENTITY, 1.0);
+            r.draw_cached(
+                &inner,
+                quad,
+                quad,
+                Transformation::IDENTITY,
+                1.0,
+                FilterQuality::Bilinear,
+            );
         });
         assert_eq!(record, Record::Fresh);
         assert_eq!((outer.record_count(), inner.record_count()), (1, 1));
@@ -225,6 +245,28 @@ mod tiny_skia {
 mod wgpu {
     use super::*;
     use iced_core::{Font, Pixels};
+
+    /// Records a 4 x 4 px texture with a hard interior edge: the left half red,
+    /// the right half black. A uniform texture would reconstruct identically under
+    /// every kernel (they all sum to 1), so a filtering test needs structure.
+    fn record_edge(renderer: &mut Renderer, cache: &TextureCache) -> Record {
+        renderer.record(cache, TEXTURE, 1.0, |r| {
+            r.fill_quad(
+                Quad {
+                    bounds: Rectangle::new(Point::new(0.0, 0.0), Size::new(2.0, 4.0)),
+                    ..Quad::default()
+                },
+                Color::from_rgb(1.0, 0.0, 0.0),
+            );
+            r.fill_quad(
+                Quad {
+                    bounds: Rectangle::new(Point::new(2.0, 0.0), Size::new(2.0, 4.0)),
+                    ..Quad::default()
+                },
+                Color::BLACK,
+            );
+        })
+    }
 
     fn headless_wgpu() -> Renderer {
         iced_test::futures::futures::executor::block_on(<Renderer as Headless>::new(
@@ -286,7 +328,14 @@ mod wgpu {
 
         let record = renderer.record(&outer, TEXTURE, 1.0, |r| {
             assert_eq!(record_red(r, &inner, 1.0), Record::Fresh);
-            r.draw_cached(&inner, quad, quad, Transformation::IDENTITY, 1.0);
+            r.draw_cached(
+                &inner,
+                quad,
+                quad,
+                Transformation::IDENTITY,
+                1.0,
+                FilterQuality::Bilinear,
+            );
         });
         assert_eq!(record, Record::Fresh);
         assert_red(pixel(&composite(&mut renderer, &outer, 1.0), 3, 3));
@@ -309,6 +358,7 @@ mod wgpu {
             canvas(),
             Transformation::IDENTITY,
             1.0,
+            FilterQuality::Bilinear,
         );
 
         // Same cache, new size: a new texture, blue this time.
@@ -328,6 +378,7 @@ mod wgpu {
             canvas(),
             Transformation::IDENTITY,
             1.0,
+            FilterQuality::Bilinear,
         );
 
         let shot = renderer.screenshot(CANVAS, 1.0, Color::WHITE);
@@ -337,5 +388,101 @@ mod wgpu {
             blue[2] >= 250 && blue[0] <= 3 && blue[1] <= 3,
             "blue: {blue:?}"
         );
+    }
+
+    #[test]
+    #[ignore = "needs a GPU adapter"]
+    fn the_filter_tiers_reconstruct_a_sub_pixel_offset_differently() {
+        // The composite's viewport is set from unsnapped bounds, so a
+        // fractional offset reaches the fragment shader as sub-pixel phase.
+        // Each tier must then do something different with it.
+        //
+        // The offset is a quarter pixel, not a half: at phase ½ the two
+        // outer Catmull-Rom taps of a step edge read the same values as
+        // their neighbours, so the negative lobes (-1/16) cancel the boost
+        // (9/16) exactly and the kernel *does* reduce to the bilinear
+        // midpoint. Every other phase separates them.
+        const OFFSET: f32 = 0.25;
+        /// The pixel the edge falls in once the composite is offset.
+        const EDGE: (u32, u32) = (4, 4);
+
+        let mut renderer = headless_wgpu();
+        let cache = TextureCache::new();
+        assert_eq!(record_edge(&mut renderer, &cache), Record::Fresh);
+
+        let aligned = composite_with(&mut renderer, &cache, 1.0, FilterQuality::Bilinear, 0.0);
+        let bilinear = composite_with(&mut renderer, &cache, 1.0, FilterQuality::Bilinear, OFFSET);
+        let catmull_rom = composite_with(
+            &mut renderer,
+            &cache,
+            1.0,
+            FilterQuality::CatmullRom,
+            OFFSET,
+        );
+        let snapped = composite_with(&mut renderer, &cache, 1.0, FilterQuality::Snap, OFFSET);
+
+        // The offset is real: it lands the edge between two texels, which an
+        // aligned composite never does.
+        let blend = pixel(&bilinear, EDGE.0, EDGE.1);
+        assert!(
+            blend[0] > 0 && blend[0] < 255,
+            "sub-pixel phase never reached the shader: {blend:?}"
+        );
+        assert_ne!(bilinear, aligned);
+
+        // Catmull-Rom's negative lobes overshoot, pulling the transition
+        // pixel further towards the dark side than the single tap does: that
+        // overshoot is what keeps a moving edge looking sharp.
+        let sharp = pixel(&catmull_rom, EDGE.0, EDGE.1);
+        assert!(
+            sharp[0] < blend[0],
+            "the bicubic path did not sharpen the edge: {sharp:?} vs {blend:?}"
+        );
+
+        // `Snap` composites the bounds it is handed — snapping is the
+        // caller's job — so here it must match the single tap exactly. What
+        // it must not do is take the bicubic path.
+        assert_eq!(
+            snapped, bilinear,
+            "Snap must share the single-tap shader path"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a GPU adapter"]
+    fn an_aligned_composite_is_identical_across_the_tiers() {
+        // At integer phase Catmull-Rom collapses to one exact tap, so a
+        // resting frame must not depend on the tier at all.
+        let mut renderer = headless_wgpu();
+        let cache = TextureCache::new();
+        assert_eq!(record_edge(&mut renderer, &cache), Record::Fresh);
+
+        let bilinear = composite_with(&mut renderer, &cache, 1.0, FilterQuality::Bilinear, 0.0);
+
+        for filter in [FilterQuality::CatmullRom, FilterQuality::Snap] {
+            let shot = composite_with(&mut renderer, &cache, 1.0, filter, 0.0);
+            assert_eq!(shot, bilinear, "{filter:?} changed a pixel-aligned frame");
+        }
+    }
+
+    #[test]
+    #[ignore = "needs a GPU adapter"]
+    fn changing_the_filter_does_not_re_record() {
+        // The tier only affects the composite, so it must not be part of the
+        // key that decides whether a texture is still valid.
+        let mut renderer = headless_wgpu();
+        let cache = TextureCache::new();
+        assert_eq!(record_red(&mut renderer, &cache, 1.0), Record::Fresh);
+
+        for filter in [
+            FilterQuality::CatmullRom,
+            FilterQuality::Bilinear,
+            FilterQuality::Snap,
+        ] {
+            assert_eq!(record_red(&mut renderer, &cache, 1.0), Record::Reused);
+            let _ = composite_with(&mut renderer, &cache, 1.0, filter, 0.5);
+        }
+
+        assert_eq!(cache.record_count(), 1);
     }
 }

@@ -16,6 +16,7 @@ use iced_core::{
 };
 use iced_graphics::{compositor, mesh};
 
+use crate::filter::FilterQuality;
 use crate::record::{Record, TextureRenderer, normalize_opacity};
 use crate::texture_cache::TextureCache;
 
@@ -383,6 +384,10 @@ impl TextureRenderer for WgpuRenderer {
         self.scale_factor
     }
 
+    fn filter_quality(&self) -> FilterQuality {
+        crate::filter::filter_quality().unwrap_or(self.store.gpu().filter_quality)
+    }
+
     fn record(
         &mut self,
         cache: &TextureCache,
@@ -407,6 +412,7 @@ impl TextureRenderer for WgpuRenderer {
         clip: Rectangle,
         transform: Transformation,
         opacity: f32,
+        filter: FilterQuality,
     ) {
         use iced_wgpu::primitive::Renderer as _;
 
@@ -421,7 +427,7 @@ impl TextureRenderer for WgpuRenderer {
             renderer.with_transformation(transform, |renderer| {
                 renderer.inner.draw_primitive(
                     bounds,
-                    crate::composite::CompositePrimitive::new(view, opacity),
+                    crate::composite::CompositePrimitive::new(view, opacity, filter),
                 );
             });
         });
@@ -466,6 +472,13 @@ impl TextureRenderer for TinySkiaRenderer {
         self.scale_factor
     }
 
+    // A rasterizer has no adapter to read a tier from, and `Bilinear` is what
+    // this backend has always composited with; `Snap` is honoured when it is
+    // asked for explicitly.
+    fn filter_quality(&self) -> FilterQuality {
+        crate::filter::filter_quality().unwrap_or(FilterQuality::Bilinear)
+    }
+
     fn record(
         &mut self,
         cache: &TextureCache,
@@ -490,6 +503,7 @@ impl TextureRenderer for TinySkiaRenderer {
         clip: Rectangle,
         transform: Transformation,
         opacity: f32,
+        filter: FilterQuality,
     ) {
         let Some(opacity) = normalize_opacity(opacity) else {
             return;
@@ -498,13 +512,22 @@ impl TextureRenderer for TinySkiaRenderer {
             return;
         };
 
+        // There is no bicubic kernel in iced's raster path, so `CatmullRom`
+        // degrades to the same bilinear tap as `Bilinear`. `Snap` composites
+        // on the pixel grid, where nearest is exact and cheapest; the caller
+        // has already snapped the transform.
+        let snap = filter.snaps();
         let image = image::Image {
             handle,
-            filter_method: image::FilterMethod::Linear,
+            filter_method: if snap {
+                image::FilterMethod::Nearest
+            } else {
+                image::FilterMethod::Linear
+            },
             rotation: iced_core::Radians(0.0),
             border_radius: iced_core::border::Radius::default(),
             opacity,
-            snap: false,
+            snap,
         };
 
         self.with_layer(clip, |renderer| {
@@ -528,6 +551,13 @@ impl TextureRenderer for Renderer {
         match self {
             Self::Primary(renderer) => renderer.scale_factor,
             Self::Secondary(renderer) => renderer.scale_factor,
+        }
+    }
+
+    fn filter_quality(&self) -> FilterQuality {
+        match self {
+            Self::Primary(renderer) => renderer.filter_quality(),
+            Self::Secondary(renderer) => renderer.filter_quality(),
         }
     }
 
@@ -584,13 +614,14 @@ impl TextureRenderer for Renderer {
         clip: Rectangle,
         transform: Transformation,
         opacity: f32,
+        filter: FilterQuality,
     ) {
         match self {
             Self::Primary(renderer) => {
-                renderer.draw_cached(cache, bounds, clip, transform, opacity);
+                renderer.draw_cached(cache, bounds, clip, transform, opacity, filter);
             }
             Self::Secondary(renderer) => {
-                renderer.draw_cached(cache, bounds, clip, transform, opacity);
+                renderer.draw_cached(cache, bounds, clip, transform, opacity, filter);
             }
         }
     }

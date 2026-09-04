@@ -38,16 +38,24 @@ The first release. What each crate provides:
 - `Cached` / `cached()`: records a subtree into a texture and composites it
   with animated `translate`, `scale`, `opacity`; `supersample`,
   `supersample_in_motion`, `pixel_snap(PixelSnap::{Auto, Always, Never,
-  LayoutOnly})`, `auto_invalidate`; automatic invalidation when the content
-  reacts, nested caches propagate to their ancestors.
+  LayoutOnly})`, `filter_quality`, `auto_invalidate`; automatic invalidation
+  when the content reacts, nested caches propagate to their ancestors.
+- `FilterQuality::{CatmullRom, Bilinear, Snap}`: the reconstruction kernel used
+  when a texture is composited between device pixels. Chosen from the graphics
+  adapter by default (`CatmullRom` discrete, `Bilinear` integrated, `Snap`
+  otherwise; `Bilinear` on the software backend), forced process-wide with
+  `set_filter_quality` and read back with `filter_quality`, and overridden per
+  widget by `Cached::filter_quality` / `Pager::filter_quality`. `Snap`
+  overrides `PixelSnap`.
 - `Pager` / `pager()`: a sliding page stack with per-page textures and
-  interpolated height (`current`, `motion`, `curve`, `width`, `max_height`).
+  interpolated height (`current`, `motion`, `curve`, `width`, `max_height`,
+  `filter_quality`).
 - `TextureCache` handles with `id`, `invalidate`, `is_invalidated`,
   `record_count`, `generation`; `TextureCacheId`.
 - `Renderer` and `Compositor` for wgpu and tiny-skia (optional features, at
   least one required), the `Element` alias, `Backend`, and the open
   `TextureRenderer` trait (`record` → `Record::{Fresh, Reused, Uncacheable}`,
-  `draw_cached`).
+  `draw_cached`, `filter_quality`).
 - Surface-format selection that never picks a float format for web colours.
 - Re-exports `iced_animate`.
 

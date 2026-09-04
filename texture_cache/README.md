@@ -106,6 +106,37 @@ bound. `LayoutOnly` snaps only the layout origin. `supersample_in_motion(true)`
 records at ≥ 1.5× while moving and drops back at rest (one extra record per
 rest↔motion transition).
 
+### Reconstruction filter
+
+A texture composited between device pixels has to be resampled, and
+`FilterQuality` picks the kernel that does it:
+
+| Tier | Cost | Look |
+|---|---|---|
+| `CatmullRom` | up to 9 hardware-bilinear taps, 3 for an axis-aligned slide, 1 at integer phase | sharpest; keeps moving text and edges crisp |
+| `Bilinear` | one tap | glides smoothly, slightly soft while moving |
+| `Snap` | one tap on the pixel grid | always crisp, motion steps by whole device pixels |
+
+`Snap` **overrides `pixel_snap`**: its crispness comes from the geometry, not
+from the shader, so it snaps whatever that policy asks for.
+
+Without a choice the tier follows the graphics adapter — `CatmullRom` on a
+discrete GPU, `Bilinear` on an integrated one, `Snap` on anything else
+(software, virtual, unknown), where a fragment-heavy kernel would hurt most.
+The software backend has no adapter and composites `Bilinear`; it has no
+bicubic kernel either, so `CatmullRom` degrades to the same bilinear tap there.
+
+`set_filter_quality(quality)` forces one tier for the whole process (call it
+before `run()`; `set_filter_quality(None)` restores the automatic choice), and
+`Cached::filter_quality` / `Pager::filter_quality` override it per widget. The
+tier only affects compositing, so changing it never re-records a texture.
+
+Two caveats, both sharpened versions of the mipmap limitation below: with
+`supersample` above 1 the texel grid is finer than the device grid, so the
+integer-phase fast path never fires and the full kernel runs on a minification
+it cannot fix; and at a `scale` well below 1 `CatmullRom`'s high-frequency
+boost makes the aliasing slightly more visible than `Bilinear` does.
+
 ### Z-order
 
 Anything drawn *after* a `Cached` inside the same parent layer renders

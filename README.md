@@ -70,7 +70,7 @@ Run with `cargo run -p <crate> --example <name>`.
 | `iced_animate` | `tiers` | paint and layout tiers, keys, sets, springs vs eases, enter/exit | `ANIM_AUTOPLAY=1` flips every 1.5 s |
 | `iced_texture_cache` | `compositor` | translate/scale/opacity of cached textures, auto-invalidate, nesting | `ANIM_AUTOPLAY=1` |
 | `iced_texture_cache` | `pager` | `Pager` sliding between pages of different heights | `ANIM_AUTOPLAY=1` |
-| `iced_texture_cache` | `cache_benchmark` | a heavy scene cached vs direct, `PixelSnap`, supersampling, the z-order rule (all knobs in-UI) | `BENCH_LOG=1` prints statistics to stderr |
+| `iced_texture_cache` | `cache_benchmark` | a heavy scene cached vs direct, `PixelSnap`, `FilterQuality`, supersampling, the z-order rule (all knobs in-UI) | `BENCH_LOG=1` prints statistics to stderr |
 | `iced_luminate` | `overview` | all five descriptors (button hierarchies, an input with its error bubble, a collapsible sidebar, a card, a standalone pager), the theme, the motion tiers, a router with `Suspend` and `Drop` pages, a nested router | none |
 
 `ICED_BACKEND=wgpu|tiny-skia` forces a backend for any of them;

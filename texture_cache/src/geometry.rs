@@ -6,6 +6,7 @@
 use iced_core::{Point, Rectangle, Size, Transformation, Vector, mouse};
 
 use crate::cached::PixelSnap;
+use crate::filter::FilterQuality;
 
 /// Scales closer to 1 than this are treated as exactly 1; scales closer to
 /// 0 than this are treated as 0 (no inverse). One constant so the
@@ -162,12 +163,21 @@ pub(crate) fn composite_geometry(
 
 /// Whether the composited texel grid is snapped to the device grid this
 /// frame.
+///
+/// [`FilterQuality::Snap`] wins over every [`PixelSnap`] policy: that tier is
+/// defined as "no reconstruction", and the only way to have nothing to
+/// reconstruct is to sit on the grid.
 pub(crate) fn snap_decision(
+    filter: FilterQuality,
     mode: PixelSnap,
     has_live_scale: bool,
     translation_only: bool,
     at_rest: bool,
 ) -> bool {
+    if filter.snaps() {
+        return true;
+    }
+
     match mode {
         PixelSnap::Always => true,
         PixelSnap::Never | PixelSnap::LayoutOnly => false,
@@ -385,34 +395,89 @@ mod tests {
 
     #[test]
     fn snap_policy_truth_table() {
+        let filter = FilterQuality::CatmullRom;
+
         for has_live_scale in [false, true] {
             for translation_only in [false, true] {
                 for at_rest in [false, true] {
                     assert!(snap_decision(
+                        filter,
                         PixelSnap::Always,
                         has_live_scale,
                         translation_only,
                         at_rest
                     ));
                     assert!(!snap_decision(
+                        filter,
                         PixelSnap::Never,
                         has_live_scale,
                         translation_only,
                         at_rest
                     ));
                     assert!(!snap_decision(
+                        filter,
                         PixelSnap::LayoutOnly,
                         has_live_scale,
                         translation_only,
                         at_rest
                     ));
                     assert_eq!(
-                        snap_decision(PixelSnap::Auto, has_live_scale, translation_only, at_rest),
+                        snap_decision(
+                            filter,
+                            PixelSnap::Auto,
+                            has_live_scale,
+                            translation_only,
+                            at_rest
+                        ),
                         !has_live_scale && translation_only && at_rest
                     );
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_snap_tier_overrides_every_pixel_snap_policy() {
+        for mode in [
+            PixelSnap::Auto,
+            PixelSnap::Always,
+            PixelSnap::Never,
+            PixelSnap::LayoutOnly,
+        ] {
+            for has_live_scale in [false, true] {
+                for translation_only in [false, true] {
+                    for at_rest in [false, true] {
+                        assert!(snap_decision(
+                            FilterQuality::Snap,
+                            mode,
+                            has_live_scale,
+                            translation_only,
+                            at_rest
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_filtering_tiers_leave_the_snap_policy_alone() {
+        // `Bilinear` reconstructs in the shader, so it must not smuggle in a
+        // snap the way `Snap` does.
+        assert!(!snap_decision(
+            FilterQuality::Bilinear,
+            PixelSnap::Never,
+            false,
+            true,
+            true
+        ));
+        assert!(snap_decision(
+            FilterQuality::Bilinear,
+            PixelSnap::Auto,
+            false,
+            true,
+            true
+        ));
     }
 
     #[test]

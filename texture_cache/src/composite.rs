@@ -11,6 +11,8 @@ use iced_core::Rectangle;
 use iced_graphics::Viewport;
 use iced_wgpu::primitive::{Pipeline, Primitive};
 
+use crate::filter::FilterQuality;
+
 const SHADER: &str = include_str!("shader/composite.wgsl");
 
 /// Instances a single texture can be composited per frame before its params
@@ -21,17 +23,20 @@ const INITIAL_INSTANCES: u32 = 4;
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Params {
     opacity: f32,
-    _pad: [f32; 3],
+    /// The reconstruction kernel; see [`FilterQuality::shader_mode`].
+    mode: f32,
+    _pad: [f32; 2],
 }
 
 const PARAMS_SIZE: u64 = std::mem::size_of::<Params>() as u64;
 const _: () = assert!(PARAMS_SIZE == 16, "the WGSL `Params` struct is 16 bytes");
 
 impl Params {
-    fn new(opacity: f32) -> Self {
+    fn new(opacity: f32, filter: FilterQuality) -> Self {
         Self {
             opacity,
-            _pad: [0.0; 3],
+            mode: filter.shader_mode(),
+            _pad: [0.0; 2],
         }
     }
 }
@@ -43,6 +48,9 @@ pub(crate) struct CompositePrimitive {
     /// Group opacity, already normalised to `0.0..=1.0` by
     /// `TextureRenderer::draw_cached`.
     opacity: f32,
+    /// The reconstruction kernel this composite uses. Per instance, not per
+    /// pipeline: two widgets sharing a texture may ask for different tiers.
+    filter: FilterQuality,
     /// The instance `prepare` assigned, read back by `draw`. Stored on the
     /// primitive so `draw` does not depend on being called in preparation
     /// order.
@@ -50,7 +58,7 @@ pub(crate) struct CompositePrimitive {
 }
 
 impl CompositePrimitive {
-    pub(crate) fn new(view: Arc<wgpu::TextureView>, opacity: f32) -> Self {
+    pub(crate) fn new(view: Arc<wgpu::TextureView>, opacity: f32, filter: FilterQuality) -> Self {
         debug_assert!(
             (0.0..=1.0).contains(&opacity),
             "opacity is normalised before a primitive is built"
@@ -59,6 +67,7 @@ impl CompositePrimitive {
         Self {
             view,
             opacity,
+            filter,
             instance: AtomicU32::new(0),
         }
     }
@@ -86,9 +95,9 @@ struct Binding {
     shadow: Vec<Params>,
 }
 
-/// Appends `opacity` to `shadow` and returns its instance.
-fn assign_instance(shadow: &mut Vec<Params>, opacity: f32) -> u32 {
-    shadow.push(Params::new(opacity));
+/// Appends one instance's parameters to `shadow` and returns its instance.
+fn assign_instance(shadow: &mut Vec<Params>, opacity: f32, filter: FilterQuality) -> u32 {
+    shadow.push(Params::new(opacity, filter));
     u32::try_from(shadow.len() - 1).expect("fewer than u32::MAX composites per frame")
 }
 
@@ -315,7 +324,7 @@ impl Primitive for CompositePrimitive {
             return;
         };
 
-        let index = assign_instance(&mut binding.shadow, self.opacity);
+        let index = assign_instance(&mut binding.shadow, self.opacity, self.filter);
         queue.write_buffer(
             &binding.params,
             pipeline.stride * u64::from(index),
@@ -350,16 +359,32 @@ mod tests {
 
     #[test]
     fn instances_keep_their_slot_and_opacity_across_growth() {
+        let filter = FilterQuality::CatmullRom;
         let mut shadow = Vec::new();
-        let a = assign_instance(&mut shadow, 0.25);
-        let b = assign_instance(&mut shadow, 0.5);
+        let a = assign_instance(&mut shadow, 0.25, filter);
+        let b = assign_instance(&mut shadow, 0.5, filter);
         // "Growth": the shadow moves to a new binding unchanged.
         let moved = shadow;
         let mut grown = moved.clone();
-        let c = assign_instance(&mut grown, 1.0);
+        let c = assign_instance(&mut grown, 1.0, filter);
         assert_eq!((a, b, c), (0, 1, 2));
         assert_eq!(moved[a as usize].opacity, 0.25);
         assert_eq!(moved[b as usize].opacity, 0.5);
+    }
+
+    #[test]
+    fn instances_of_one_texture_carry_their_own_filter() {
+        // The same cache composited twice in a frame at two tiers: each
+        // instance's uniform block must keep the tier it was assigned.
+        let mut shadow = Vec::new();
+        let sharp = assign_instance(&mut shadow, 1.0, FilterQuality::CatmullRom);
+        let cheap = assign_instance(&mut shadow, 1.0, FilterQuality::Bilinear);
+        let snapped = assign_instance(&mut shadow, 1.0, FilterQuality::Snap);
+
+        assert_eq!(shadow[sharp as usize].mode, 0.0);
+        assert_eq!(shadow[cheap as usize].mode, 1.0);
+        // `Snap` shares the single-tap path; the geometry is what differs.
+        assert_eq!(shadow[snapped as usize].mode, 1.0);
     }
 
     #[test]

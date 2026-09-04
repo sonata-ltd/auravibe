@@ -9,6 +9,7 @@ use iced_core::{
 };
 
 use crate::ancestors;
+use crate::filter::FilterQuality;
 use crate::geometry;
 use crate::reaction::{Activity, observe};
 use crate::record::{Record, TextureRenderer};
@@ -131,6 +132,8 @@ where
     auto_invalidate: bool,
     pixel_snap: PixelSnap,
     supersample_in_motion: bool,
+    /// `None` inherits the renderer's tier; see [`Cached::filter_quality`].
+    filter: Option<FilterQuality>,
 }
 
 impl<Message, Theme, Renderer> std::fmt::Debug for Cached<'_, Message, Theme, Renderer>
@@ -147,6 +150,7 @@ where
             .field("auto_invalidate", &self.auto_invalidate)
             .field("pixel_snap", &self.pixel_snap)
             .field("supersample_in_motion", &self.supersample_in_motion)
+            .field("filter", &self.filter)
             .finish_non_exhaustive()
     }
 }
@@ -183,10 +187,41 @@ where
             auto_invalidate: true,
             pixel_snap: PixelSnap::Auto,
             supersample_in_motion: false,
+            filter: None,
         }
     }
 
+    /// Overrides the [`FilterQuality`] used to composite this texture.
+    ///
+    /// Without it the widget inherits the renderer's tier: the app-wide
+    /// [`set_filter_quality`](crate::set_filter_quality) override if one is
+    /// set, otherwise the tier chosen for the graphics adapter.
+    ///
+    /// [`FilterQuality::Snap`] also forces the composite onto the device-pixel
+    /// grid, overriding [`pixel_snap`](Self::pixel_snap). Changing the tier
+    /// never re-records the texture.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use iced::widget::text;
+    /// use iced_texture_cache::{FilterQuality, TextureCache, cached};
+    ///
+    /// let cache = TextureCache::new();
+    /// let _: iced_texture_cache::Element<'_, ()> = cached(cache, text("sharp"))
+    ///     .filter_quality(FilterQuality::CatmullRom)
+    ///     .into();
+    /// ```
+    #[must_use]
+    pub fn filter_quality(mut self, quality: FilterQuality) -> Self {
+        self.filter = Some(quality);
+        self
+    }
+
     /// Sets the [`PixelSnap`] policy (default [`PixelSnap::Auto`]).
+    ///
+    /// [`FilterQuality::Snap`] overrides this: see
+    /// [`filter_quality`](Self::filter_quality).
     #[must_use]
     pub fn pixel_snap(mut self, mode: PixelSnap) -> Self {
         self.pixel_snap = mode;
@@ -521,6 +556,7 @@ where
 
         let user_transform = self.transform(bounds);
         let at_rest = state.at_rest;
+        let filter = self.filter.unwrap_or_else(|| renderer.filter_quality());
 
         let supersample =
             geometry::record_supersample(self.supersample, self.supersample_in_motion, at_rest);
@@ -533,6 +569,7 @@ where
         );
 
         let snap = geometry::snap_decision(
+            filter,
             self.pixel_snap,
             self.scale.is_live(),
             geometry::is_translation_only(&user_transform),
@@ -593,6 +630,7 @@ where
                     clip,
                     transform,
                     opacity,
+                    filter,
                 );
             }
             Record::Uncacheable => {

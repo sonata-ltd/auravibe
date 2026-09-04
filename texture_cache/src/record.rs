@@ -21,6 +21,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError, Weak};
 
 use iced_core::{Rectangle, Size, Transformation};
 
+use crate::filter::FilterQuality;
 use crate::renderer::Backend;
 use crate::texture_cache::{Inner, TextureCache, TextureCacheId as Id};
 
@@ -64,6 +65,17 @@ pub trait TextureRenderer: iced_core::Renderer {
     #[must_use]
     fn scale_factor(&self) -> f32;
 
+    /// The reconstruction tier in force on this renderer: the app-wide
+    /// [`set_filter_quality`](crate::set_filter_quality) override if one is
+    /// set, otherwise the tier chosen for the backend (the graphics adapter
+    /// on wgpu, [`FilterQuality::Bilinear`] on the software backend).
+    ///
+    /// A widget that sets its own tier passes that to
+    /// [`draw_cached`](Self::draw_cached) instead of this one; it still reads
+    /// this value to keep the snap decision and the composite in agreement.
+    #[must_use]
+    fn filter_quality(&self) -> FilterQuality;
+
     /// Rasterizes `f` into the texture of `cache` at `size` physical pixels
     /// if the cache is new, invalidated, or its size or scale changed;
     /// otherwise the existing texture is kept and `f` does not run.
@@ -95,6 +107,12 @@ pub trait TextureRenderer: iced_core::Renderer {
     /// otherwise escape it. `opacity` is clamped to `0.0..=1.0`; `NaN` or
     /// `<= 0` draws nothing. No-op if the cache was never recorded or is
     /// uncacheable.
+    ///
+    /// `filter` selects the reconstruction kernel. It only affects the
+    /// composite, never the recorded texture, so switching it does not
+    /// invalidate a cache. [`FilterQuality::Snap`] expects `transform` to
+    /// have been snapped by the caller (`Cached` and `Pager` do); the
+    /// backends do not re-snap it.
     fn draw_cached(
         &mut self,
         cache: &TextureCache,
@@ -102,6 +120,7 @@ pub trait TextureRenderer: iced_core::Renderer {
         clip: Rectangle,
         transform: Transformation,
         opacity: f32,
+        filter: FilterQuality,
     );
 }
 
@@ -276,6 +295,7 @@ mod gpu {
     use iced_graphics::Viewport;
 
     use super::{Entries, Entry, Pool, Record, Texture, clamp_size, fits, needs_record};
+    use crate::filter::FilterQuality;
     use crate::texture_cache::{Inner, TextureCache, TextureCacheId as Id};
 
     /// GPU objects shared by the compositor and every renderer it creates.
@@ -285,6 +305,8 @@ mod gpu {
         pub format: wgpu::TextureFormat,
         /// `max_texture_dimension_2d` of `device`; bounds cache sizes.
         pub max_texture_dimension: u32,
+        /// The tier this adapter gets when the app sets no override.
+        pub filter_quality: FilterQuality,
     }
 
     /// A cache recorded on wgpu.

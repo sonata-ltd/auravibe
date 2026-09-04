@@ -10,6 +10,7 @@ use iced_core::{
 };
 
 use crate::ancestors;
+use crate::filter::FilterQuality;
 use crate::geometry::{composite_geometry, lerp, snap_to_grid};
 use crate::reaction::{Activity, observe};
 use crate::record::{Record, TextureRenderer};
@@ -93,6 +94,8 @@ pub struct Pager<'a, Message, Theme = iced_core::Theme, Renderer = crate::Render
     /// requested page instead of animating against a clock nothing ticks.
     motion: Option<Motion>,
     curve: Curve,
+    /// `None` inherits the renderer's tier; see [`Pager::filter_quality`].
+    filter: Option<FilterQuality>,
 }
 
 impl<Message, Theme, Renderer> std::fmt::Debug for Pager<'_, Message, Theme, Renderer> {
@@ -105,6 +108,7 @@ impl<Message, Theme, Renderer> std::fmt::Debug for Pager<'_, Message, Theme, Ren
             .field("current", &self.current)
             .field("motion", &self.motion)
             .field("curve", &self.curve)
+            .field("filter", &self.filter)
             .finish_non_exhaustive()
     }
 }
@@ -292,7 +296,31 @@ where
             current: 0,
             motion: None,
             curve: STRUCTURAL,
+            filter: None,
         }
+    }
+
+    /// Overrides the [`FilterQuality`] used to composite the sliding pages.
+    ///
+    /// Without it the pager inherits the renderer's tier. Only the sliding
+    /// frames are composited, so this changes nothing at rest, where a page is
+    /// drawn directly on the device grid. [`FilterQuality::Snap`] snaps each
+    /// page's texture onto that grid while it slides.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use iced::widget::text;
+    /// use iced_texture_cache::{FilterQuality, pager};
+    ///
+    /// let _: iced_texture_cache::Element<'_, ()> = pager([text("one"), text("two")])
+    ///     .filter_quality(FilterQuality::Bilinear)
+    ///     .into();
+    /// ```
+    #[must_use]
+    pub fn filter_quality(mut self, quality: FilterQuality) -> Self {
+        self.filter = Some(quality);
+        self
     }
 
     /// The page to show (default 0). Clamped to the last page; see
@@ -690,6 +718,8 @@ where
         let bounds = layout.bounds();
         let scale = renderer.scale_factor();
 
+        let filter = self.filter.unwrap_or_else(|| renderer.filter_quality());
+
         if state.is_sliding() {
             for (i, child_layout) in visible_pages(state.visible, layout) {
                 let child_bounds = child_layout.bounds();
@@ -698,7 +728,10 @@ where
                 if !child_bounds.intersects(&bounds) {
                     continue;
                 }
-                let composite = composite_geometry(BLEED, child_bounds, scale, 1.0, false);
+                // The slide has no transform of its own: the offset lives in
+                // the page's layout, so snapping the layout origin is what
+                // puts `Snap` on the device grid.
+                let composite = composite_geometry(BLEED, child_bounds, scale, 1.0, filter.snaps());
                 // Clip to the pager (a page mid-slide overhangs its edges)
                 // and to the parent's clip.
                 let Some(clip) = composite
@@ -740,6 +773,7 @@ where
                         clip,
                         Transformation::IDENTITY,
                         1.0,
+                        filter,
                     ),
                     // Too large for a texture: the page is already laid out
                     // where it is drawn, so draw it there under the same clip.
