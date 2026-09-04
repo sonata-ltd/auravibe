@@ -259,11 +259,13 @@ fn the_bubble_is_clamped_to_the_right_edge() {
     let natural_width = r - l;
     assert!(natural_width > 60, "a readable bubble: {natural_width} px");
 
-    // A viewport narrower than the anchor-relative position allows: the
-    // bubble stays inside it and re-wraps its message instead of being cut.
-    let narrow = render(view(), Size::new(260.0, 200.0));
-    let (l, r, _, _) = extent(&narrow, 260, bubble_fill()).expect("the bubble is painted");
-    assert!(r < 259, "clamped inside the viewport: {l}..={r}");
+    // Use a viewport narrower than the bubble's natural width on every platform.
+    // Font metrics vary, so keep it well below the smallest width observed. The
+    // bubble should stay inside the viewport and wrap its message instead of
+    // being cut off.
+    let narrow = render(view(), Size::new(180.0, 200.0));
+    let (l, r, _, _) = extent(&narrow, 180, bubble_fill()).expect("the bubble is painted");
+    assert!(r < 179, "clamped inside the viewport: {l}..={r}");
     assert!(
         r - l < natural_width,
         "re-wrapped to the narrower viewport: {} vs {natural_width}",
