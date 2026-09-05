@@ -36,7 +36,9 @@ const FAST: Curve = Curve::spring(SpringParams::new(0.0, Duration::from_millis(3
 /// included. That is exactly what a snapped quad cannot produce.
 fn side_of(rgba: &[u8]) -> f64 {
     let ink = rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|p| (255.0 - f64::from(p[0])) / 255.0)
         .sum::<f64>();
 
