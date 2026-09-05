@@ -12,6 +12,7 @@ use iced_luminate::iced::{self, Length, Subscription, Task};
 use iced_luminate::router::{Registry, RouteMessage};
 use iced_luminate::theme::typography::FONT;
 use iced_luminate::{Element, Luminate, Router};
+use iced_texture_cache::{FilterQuality, set_filter_quality};
 
 use crate::pages::{
     buttons::ButtonsPage, card::CardPage, inputs::InputsPage, motion::MotionPage,
@@ -23,6 +24,8 @@ mod pages;
 fn main() -> iced::Result {
     // `RUST_LOG=info` shows the adapter and the surface-format choice.
     env_logger::init();
+
+    set_filter_quality(FilterQuality::CatmullRom);
 
     let app = iced::application(App::new, App::update, App::view)
         .title("iced_luminate: overview")

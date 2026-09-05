@@ -155,6 +155,21 @@ the pages. It uses `Tier::Layout` and the `STRUCTURAL` curve by default;
 and snaps it. `.motion(m)`
 binds it to an engine; without one it switches instantly.
 
+`pixel_snap` and `filter_quality` apply to the *sliding* frames only — the
+resting page is drawn directly on the device grid under every policy.
+
+The two axes of a slide are not alike. `x` carries the motion and must stay
+fractional or the page steps by whole device pixels; `y` moves only because
+the pager interpolates its height between the two pages and centres each one
+in the result. Leaving `y` fractional is expensive: with both axes off the
+grid the composite runs its full 9-tap kernel and resamples the page
+*vertically*, which is the direction text can least afford to lose. `Auto`
+(the default) therefore snaps `y` and leaves `x` alone — smooth horizontally,
+crisp vertically. `LayoutOnly` additionally snaps the pager's own `x` origin,
+keeping only the slide fractional, so the blur level cannot breathe when the
+surrounding layout shifts mid-slide. `Always` snaps both axes; `Never` snaps
+neither and is an escape hatch, not a good default.
+
 ### Renderer and compositor
 
 `Renderer` and `Compositor` are iced's own wgpu / tiny-skia fallback types

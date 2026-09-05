@@ -10,8 +10,9 @@ use iced_core::{
 };
 
 use crate::ancestors;
+use crate::cached::PixelSnap;
 use crate::filter::FilterQuality;
-use crate::geometry::{composite_geometry, lerp, snap_to_grid};
+use crate::geometry::{composite_geometry, lerp, pager_page_bounds, snap_to_grid};
 use crate::reaction::{Activity, observe};
 use crate::record::{Record, TextureRenderer};
 use crate::texture_cache::TextureCache;
@@ -96,6 +97,7 @@ pub struct Pager<'a, Message, Theme = iced_core::Theme, Renderer = crate::Render
     curve: Curve,
     /// `None` inherits the renderer's tier; see [`Pager::filter_quality`].
     filter: Option<FilterQuality>,
+    pixel_snap: PixelSnap,
 }
 
 impl<Message, Theme, Renderer> std::fmt::Debug for Pager<'_, Message, Theme, Renderer> {
@@ -109,6 +111,7 @@ impl<Message, Theme, Renderer> std::fmt::Debug for Pager<'_, Message, Theme, Ren
             .field("motion", &self.motion)
             .field("curve", &self.curve)
             .field("filter", &self.filter)
+            .field("pixel_snap", &self.pixel_snap)
             .finish_non_exhaustive()
     }
 }
@@ -297,7 +300,56 @@ where
             motion: None,
             curve: STRUCTURAL,
             filter: None,
+            pixel_snap: PixelSnap::Auto,
         }
+    }
+
+    /// Sets the [`PixelSnap`] policy for the sliding pages (default
+    /// [`PixelSnap::Auto`]).
+    ///
+    /// Only the *sliding* frames are affected: a resting page is drawn
+    /// directly on the device grid, with no texture and so nothing to
+    /// resample, and that stays true under every policy.
+    ///
+    /// A slide is horizontal, so the two axes are not alike here. `x` carries
+    /// the motion and has to stay fractional or the page steps by whole
+    /// device pixels. `y` moves only because the pager interpolates its
+    /// height between the two pages and centres each one in the result — a
+    /// side effect of the transition, not motion anyone follows. Leaving `y`
+    /// fractional costs a great deal: with both axes off the grid the
+    /// composite shader runs its full 9-tap kernel and resamples the page
+    /// *vertically*, which is the direction text can least afford to lose.
+    /// Snapping `y` puts that axis at integer phase, collapses the kernel to
+    /// 3 taps, and keeps the slide just as smooth.
+    ///
+    /// * [`Auto`](PixelSnap::Auto) snaps `y` and leaves `x` alone: smooth
+    ///   horizontally, crisp vertically. The default, and what you want.
+    /// * [`LayoutOnly`](PixelSnap::LayoutOnly) also snaps the *pager's* own
+    ///   `x` origin, keeping only the slide itself fractional, so the
+    ///   resampling phase cannot shift when the surrounding layout moves
+    ///   mid-slide (a window resize, a scrollbar appearing) — which would
+    ///   otherwise make the blur level visibly breathe.
+    /// * [`Always`](PixelSnap::Always) snaps both axes: crisp throughout, but
+    ///   the slide steps by whole device pixels.
+    /// * [`Never`](PixelSnap::Never) snaps neither and resamples both axes.
+    ///   The escape hatch, not a good default.
+    ///
+    /// [`FilterQuality::Snap`] overrides all of them.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use iced::widget::text;
+    /// use iced_texture_cache::{PixelSnap, pager};
+    ///
+    /// let _: iced_texture_cache::Element<'_, ()> = pager([text("one"), text("two")])
+    ///     .pixel_snap(PixelSnap::LayoutOnly)
+    ///     .into();
+    /// ```
+    #[must_use]
+    pub fn pixel_snap(mut self, mode: PixelSnap) -> Self {
+        self.pixel_snap = mode;
+        self
     }
 
     /// Overrides the [`FilterQuality`] used to composite the sliding pages.
@@ -729,9 +781,16 @@ where
                     continue;
                 }
                 // The slide has no transform of its own: the offset lives in
-                // the page's layout, so snapping the layout origin is what
-                // puts `Snap` on the device grid.
-                let composite = composite_geometry(BLEED, child_bounds, scale, 1.0, filter.snaps());
+                // the page's layout, so the policy is applied to the origin
+                // the texture is composited at. `composite_geometry` is then
+                // handed the result and must not snap again.
+                let composite = composite_geometry(
+                    BLEED,
+                    pager_page_bounds(filter, self.pixel_snap, child_bounds, bounds, scale),
+                    scale,
+                    1.0,
+                    false,
+                );
                 // Clip to the pager (a page mid-slide overhangs its edges)
                 // and to the parent's clip.
                 let Some(clip) = composite
@@ -745,7 +804,12 @@ where
                 let child = &self.children[i];
                 let child_tree = &tree.children[i];
                 let page = &state.pages[i];
-                let origin = Vector::new(-composite.cache_bounds.x, -composite.cache_bounds.y);
+                // The page's content lands `BLEED` texels into the texture
+                // whatever origin the texture is composited at: the snap then
+                // displaces the image, instead of baking a sub-pixel phase
+                // into a texture that is recorded once and reused all slide.
+                let origin =
+                    Vector::new(BLEED as f32 - child_bounds.x, BLEED as f32 - child_bounds.y);
 
                 let record = renderer.record(
                     &page.cache,

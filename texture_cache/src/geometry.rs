@@ -185,6 +185,67 @@ pub(crate) fn snap_decision(
     }
 }
 
+/// Where a [`Pager`](crate::Pager) page's texture is composited, with `mode`
+/// applied to its origin.
+///
+/// A slide is horizontal: `page.x` carries the motion and must stay
+/// fractional, or the page steps by whole device pixels. `page.y` moves only
+/// because the pager interpolates its height between the two pages and
+/// centres each one in the result — a side effect of the transition, not the
+/// motion the eye follows. Snapping `y` therefore costs nothing visible and
+/// buys a great deal: with one axis at integer phase the composite shader
+/// collapses its separable kernel from 9 taps to 3 and stops resampling the
+/// page vertically, which is the direction text can least afford to lose.
+///
+/// The pager's own origin is the *discrete* part of a page's position — it
+/// jumps when the surrounding layout reshuffles — and the page's offset
+/// inside the pager is the *smooth* part. Splitting those is what
+/// [`PixelSnap::LayoutOnly`] adds on the horizontal axis.
+///
+/// Only sliding frames go through this: a resting page is drawn directly on
+/// the device grid, with no texture and so nothing to resample.
+pub(crate) fn pager_page_bounds(
+    filter: FilterQuality,
+    mode: PixelSnap,
+    page: Rectangle,
+    pager: Rectangle,
+    scale: f32,
+) -> Rectangle {
+    let snapped = |value: f32| snap_to_grid(value, scale);
+
+    // `FilterQuality::Snap` overrides the policy, exactly as it does for
+    // `Cached`: that tier is defined as having nothing to reconstruct.
+    if filter.snaps() || mode == PixelSnap::Always {
+        return Rectangle {
+            x: snapped(page.x),
+            y: snapped(page.y),
+            ..page
+        };
+    }
+
+    // The escape hatch: resample both axes and keep the page exactly where
+    // the layout put it.
+    if mode == PixelSnap::Never {
+        return page;
+    }
+
+    // `Auto` and `LayoutOnly` both snap the vertical axis. They differ on the
+    // horizontal one: `LayoutOnly` also snaps the pager's own origin there,
+    // so the resampling phase varies only with the slide and the blur level
+    // cannot "breathe" when the layout shifts mid-slide.
+    let x = if mode == PixelSnap::LayoutOnly {
+        snapped(pager.x) + (page.x - pager.x)
+    } else {
+        page.x
+    };
+
+    Rectangle {
+        x,
+        y: snapped(page.y),
+        ..page
+    }
+}
+
 /// The supersample factor to record at this frame.
 pub(crate) fn record_supersample(base: f32, supersample_in_motion: bool, at_rest: bool) -> f32 {
     if supersample_in_motion && !at_rest {
@@ -478,6 +539,184 @@ mod tests {
             true,
             true
         ));
+    }
+
+    /// A pager at a fractional origin, its page slid horizontally and centred
+    /// vertically by fractional amounts inside it. Every component is off the
+    /// device grid at scale 2 — including both `y` values — so a policy that
+    /// snaps one axis, or one part of an axis, and not another is visible in
+    /// the result.
+    fn pager_and_page() -> (Rectangle, Rectangle) {
+        let pager = Rectangle::new(Point::new(10.3, 4.1), Size::new(100.0, 50.0));
+        let page = Rectangle::new(Point::new(10.3 - 21.7, 4.1 + 0.37), Size::new(100.0, 50.0));
+        (pager, page)
+    }
+
+    #[test]
+    fn the_fixture_sits_off_the_device_grid_on_both_axes() {
+        // Guards every assertion below: on-grid values would make "snapped"
+        // and "left alone" indistinguishable.
+        let (pager, page) = pager_and_page();
+
+        for value in [pager.x, pager.y, page.x, page.y] {
+            assert_ne!(
+                snap_to_grid(value, 2.0),
+                value,
+                "{value} is already on the grid"
+            );
+        }
+    }
+
+    #[test]
+    fn always_snaps_the_whole_page_origin() {
+        let (pager, page) = pager_and_page();
+        let snapped = pager_page_bounds(
+            FilterQuality::CatmullRom,
+            PixelSnap::Always,
+            page,
+            pager,
+            2.0,
+        );
+
+        assert_eq!(snapped.x, snap_to_grid(page.x, 2.0));
+        assert_eq!(snapped.y, snap_to_grid(page.y, 2.0));
+        assert_eq!(snapped.size(), page.size());
+    }
+
+    #[test]
+    fn the_snap_tier_snaps_a_page_whatever_the_policy_says() {
+        let (pager, page) = pager_and_page();
+
+        for mode in [
+            PixelSnap::Auto,
+            PixelSnap::Always,
+            PixelSnap::Never,
+            PixelSnap::LayoutOnly,
+        ] {
+            let snapped = pager_page_bounds(FilterQuality::Snap, mode, page, pager, 2.0);
+            assert_eq!(snapped.x, snap_to_grid(page.x, 2.0), "{mode:?}");
+            assert_eq!(snapped.y, snap_to_grid(page.y, 2.0), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn layout_only_keeps_the_slide_fractional_but_still_snaps_the_vertical() {
+        let (pager, page) = pager_and_page();
+        let snapped = pager_page_bounds(
+            FilterQuality::CatmullRom,
+            PixelSnap::LayoutOnly,
+            page,
+            pager,
+            2.0,
+        );
+
+        // Horizontally the page's offset inside the pager survives untouched,
+        // so the slide still glides...
+        assert!((snapped.x - snap_to_grid(pager.x, 2.0) - (page.x - pager.x)).abs() < 1e-6);
+        // ...and the page's own origin stays off the grid, unlike `Always`.
+        assert_ne!(snapped.x, snap_to_grid(page.x, 2.0));
+
+        // Vertically it is snapped outright: that axis carries no motion of
+        // its own, and integer phase there is what keeps text crisp.
+        assert_eq!(snapped.y, snap_to_grid(page.y, 2.0));
+
+        // Moving the pager by a sub-pixel amount must not change the
+        // horizontal phase: that is what this tier is for.
+        let nudged = pager_page_bounds(
+            FilterQuality::CatmullRom,
+            PixelSnap::LayoutOnly,
+            Rectangle {
+                x: page.x + 0.2,
+                ..page
+            },
+            Rectangle {
+                x: pager.x + 0.2,
+                ..pager
+            },
+            2.0,
+        );
+        assert!(
+            (nudged.x - snapped.x).abs() < 1e-6,
+            "a sub-pixel layout shift changed the resampling phase"
+        );
+    }
+
+    #[test]
+    fn auto_snaps_only_the_axis_the_slide_does_not_move() {
+        let (pager, page) = pager_and_page();
+        let placed =
+            pager_page_bounds(FilterQuality::CatmullRom, PixelSnap::Auto, page, pager, 2.0);
+
+        // The slide is horizontal, so x must stay exactly where the layout
+        // put it or the page steps by whole device pixels.
+        assert_eq!(placed.x, page.x);
+        // y moves only because the pager interpolates its height, so snapping
+        // it is free and collapses the shader kernel to three taps.
+        assert_eq!(placed.y, snap_to_grid(page.y, 2.0));
+        assert_ne!(placed.y, page.y, "the fixture's y must be off the grid");
+    }
+
+    #[test]
+    fn never_leaves_both_axes_alone() {
+        let (pager, page) = pager_and_page();
+
+        assert_eq!(
+            pager_page_bounds(
+                FilterQuality::CatmullRom,
+                PixelSnap::Never,
+                page,
+                pager,
+                2.0
+            ),
+            page
+        );
+    }
+
+    #[test]
+    fn every_snapping_policy_puts_the_vertical_axis_on_the_device_grid() {
+        // The property the sharpness of a slide depends on: one axis at
+        // integer phase. Only the explicit opt-out gives it up.
+        let (pager, page) = pager_and_page();
+
+        for mode in [PixelSnap::Auto, PixelSnap::Always, PixelSnap::LayoutOnly] {
+            let placed = pager_page_bounds(FilterQuality::CatmullRom, mode, page, pager, 2.0);
+            let device_y = placed.y * 2.0;
+            assert!(
+                (device_y - device_y.round()).abs() < 1e-4,
+                "{mode:?} left y at a fractional device phase: {device_y}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_placed_page_shows_its_content_exactly_where_the_policy_says() {
+        // Ties the three rules `Pager::draw` composes together: the policy
+        // places the origin, `composite_geometry` insets it by `BLEED`, and
+        // the record puts the content `BLEED` back in. The snap must displace
+        // the *image*; if it leaked into the recorded content instead, the
+        // texture (recorded once, reused all slide) would carry a stale
+        // sub-pixel phase.
+        const BLEED: u32 = 2;
+        let (pager, page) = pager_and_page();
+        let scale = 2.0;
+
+        for (mode, expected) in [
+            (PixelSnap::Always, snap_to_grid(page.x, scale)),
+            (PixelSnap::Never, page.x),
+            (
+                PixelSnap::LayoutOnly,
+                snap_to_grid(pager.x, scale) + (page.x - pager.x),
+            ),
+        ] {
+            let placed = pager_page_bounds(FilterQuality::CatmullRom, mode, page, pager, scale);
+            let composite = composite_geometry(BLEED, placed, scale, 1.0, false);
+            let on_screen = composite.cache_bounds.x + BLEED as f32;
+
+            assert!(
+                (on_screen - expected).abs() < 1e-6,
+                "{mode:?}: content at {on_screen}, expected {expected}"
+            );
+        }
     }
 
     #[test]

@@ -53,13 +53,26 @@ pub type Element<'a, Message, Theme = iced_core::Theme> =
 /// Test scaffolding shared with downstream crates' tests. Not part of the
 /// stable API.
 #[doc(hidden)]
-#[cfg(feature = "tiny-skia")]
 pub mod testing {
     /// A software [`Renderer`](crate::Renderer) with cache storage that
     /// needs neither a GPU nor an async executor: record, composite and
     /// `iced_core::renderer::Headless::screenshot` all work on it.
     #[must_use]
+    #[cfg(feature = "tiny-skia")]
     pub fn headless_tiny_skia() -> crate::Renderer {
         crate::renderer::headless_tiny_skia()
+    }
+
+    /// The page placement a [`Pager`](crate::Pager) computes for one sliding
+    /// frame, so tests can measure a policy without driving a whole widget.
+    #[must_use]
+    pub fn pager_page_bounds(
+        filter: crate::FilterQuality,
+        mode: crate::PixelSnap,
+        page: iced_core::Rectangle,
+        pager: iced_core::Rectangle,
+        scale: f32,
+    ) -> iced_core::Rectangle {
+        crate::geometry::pager_page_bounds(filter, mode, page, pager, scale)
     }
 }

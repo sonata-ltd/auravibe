@@ -49,7 +49,13 @@ The first release. What each crate provides:
   overrides `PixelSnap`.
 - `Pager` / `pager()`: a sliding page stack with per-page textures and
   interpolated height (`current`, `motion`, `curve`, `width`, `max_height`,
-  `filter_quality`).
+  `filter_quality`, `pixel_snap`). `pixel_snap` applies to the sliding frames
+  only and treats the axes separately: the default `Auto` snaps the vertical
+  axis, which a slide moves only through its height interpolation, and leaves
+  the horizontal one fractional so the slide still glides. That puts one axis
+  at integer phase, where the composite shader collapses its kernel from 9
+  taps to 3 and stops resampling the page vertically. `LayoutOnly` also snaps
+  the pager's own horizontal origin, keeping only the slide fractional.
 - `TextureCache` handles with `id`, `invalidate`, `is_invalidated`,
   `record_count`, `generation`; `TextureCacheId`.
 - `Renderer` and `Compositor` for wgpu and tiny-skia (optional features, at
