@@ -24,13 +24,23 @@ pub struct SpringParams {
 }
 
 impl SpringParams {
-    /// Creates spring parameters from a `bounce` amount and a settling
+    /// Creates spring parameters from a `bounce` amount and a perceptual
     /// `duration`.
     ///
     /// `bounce` runs from `0.0` (no overshoot) toward `1.0` (very bouncy) and
-    /// is clamped to `0.0..=0.9`; `NaN` reads as `0.0`. `duration` is the
-    /// approximate settling time of a no-bounce spring (measured settle time
-    /// is within about ±30 % of it) and is floored at 1 ms.
+    /// is clamped to `0.0..=0.9`; `NaN` reads as `0.0`.
+    ///
+    /// `duration` is the *perceptual* duration: how long the motion reads as
+    /// taking, not how long the maths keeps producing values. A no-bounce
+    /// spring is about 99 % of the way there when it elapses, and the
+    /// remaining sliver — invisible, and cut off by the engine's settling
+    /// tolerance — takes about half as long again. It is floored at 1 ms.
+    ///
+    /// Both parameters mean what they mean in `SwiftUI`'s `Spring(duration:
+    /// bounce:)`, down to the coefficients — `stiffness = (2π / duration)²`,
+    /// `damping = (1 - bounce) · 4π / duration` — so a value taken from
+    /// Apple's documentation, or from a designer's `SwiftUI` prototype, can be
+    /// typed in here unchanged.
     #[must_use]
     pub const fn new(bounce: f32, duration: Duration) -> Self {
         let bounce = if bounce.is_nan() || bounce < 0.0 {
@@ -55,29 +65,35 @@ impl SpringParams {
         self.bounce
     }
 
-    /// Approximate settling time, at least 1 ms.
+    /// Perceptual duration, at least 1 ms. See [`new`](Self::new).
     #[must_use]
     pub const fn duration(self) -> Duration {
         self.duration
     }
 
     /// Natural frequency `ω` and damping ratio `ζ` for these parameters.
+    ///
+    /// One period of the oscillator *is* the duration, which is the
+    /// calibration `SwiftUI` uses: `stiffness = (2π / duration)²` and
+    /// `damping = (1 - bounce) · 4π / duration`, i.e. `ω = 2π / duration`
+    /// and `ζ = 1 - bounce`.
     fn coefficients(self) -> (f32, f32) {
         let zeta = 1.0 - self.bounce;
-
-        // For ζ = 1 the response reaches the `is_settled` tolerance at
-        // roughly `SETTLE_FACTOR / ω` seconds, so scaling ω by it makes
-        // `duration` mean what it says.
-        let omega = SETTLE_FACTOR / self.duration.as_secs_f32();
+        let omega = PERCEPTUAL_FACTOR / self.duration.as_secs_f32();
 
         (omega, zeta)
     }
 }
 
-/// `ω · t_settle` for a critically damped step response under the
-/// [`Spring::is_settled`] position tolerance: the root of
-/// `(1 + u) e^{-u} = 5e-4`.
-const SETTLE_FACTOR: f32 = 10.0;
+/// `ω · duration` for the perceptual calibration: one period of the
+/// oscillator.
+///
+/// At `t = duration` a critically damped step response is within 1.4 % of its
+/// target — visually arrived. Calibrating against the far stricter
+/// [`Spring::is_settled`] tolerance instead (which would put this at 10.0)
+/// makes the same number describe a spring about 1.6× faster, and puts every
+/// preset out of step with the `SwiftUI` values designers quote.
+const PERCEPTUAL_FACTOR: f32 = std::f32::consts::TAU;
 
 impl Default for SpringParams {
     fn default() -> Self {
@@ -256,19 +272,41 @@ mod tests {
     }
 
     #[test]
-    fn duration_approximates_settle_time() {
+    fn duration_is_the_time_to_visually_arrive() {
         for duration in [0.2, 0.4, 0.8] {
             let mut s = Spring::new(
                 SpringParams::new(0.0, Duration::from_secs_f32(duration)),
                 0.0,
             );
             s.set_target(100.0);
-            let (_, frames) = settle(s, 1.0 / 60.0, 10_000);
-            let seconds = frames as f32 / 60.0;
-            assert!(
-                (seconds - duration).abs() <= duration * 0.3,
-                "duration {duration} settled in {seconds}"
-            );
+
+            // The perceptual calibration: `duration` is when the motion is
+            // done to the eye, which for a no-bounce spring is 99 % of the
+            // way. One frame of slack at 60 Hz is 8 % of the shortest
+            // duration tested, hence the 15 % bound.
+            let mut arrival = None;
+            for frame in 1..10_000 {
+                s.tick(1.0 / 60.0);
+                if arrival.is_none() && s.position() >= 99.0 {
+                    arrival = Some(frame as f32 / 60.0);
+                }
+                if s.is_settled() {
+                    let settled = frame as f32 / 60.0;
+                    let arrival = arrival.expect("99 % comes before settling");
+                    assert!(
+                        (arrival - duration).abs() <= duration * 0.15,
+                        "duration {duration} reached 99 % at {arrival}"
+                    );
+                    // The invisible remainder: half as long again, and the
+                    // reason `duration` is not the settling time.
+                    let ratio = settled / duration;
+                    assert!(
+                        (1.4..=1.8).contains(&ratio),
+                        "duration {duration} fully settled at {ratio}x"
+                    );
+                    break;
+                }
+            }
         }
     }
 
