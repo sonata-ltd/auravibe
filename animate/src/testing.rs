@@ -23,6 +23,12 @@ const MAX_FRAMES: usize = 10_000;
 /// older than its last tick, and a zero delta advances nothing. The first
 /// tick of a fresh engine only starts its clock; the second is the first real
 /// frame.
+///
+/// The same holds after any stretch in which nothing moved: an application
+/// draws no frames while at rest, so the engine restarts its clock rather
+/// than charge that stretch to whatever starts next. A test that retargets a
+/// settled track therefore needs one frame to restart the clock and a second
+/// one to see movement.
 #[derive(Debug)]
 pub struct FrameClock {
     motion: Motion,

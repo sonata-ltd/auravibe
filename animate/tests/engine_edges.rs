@@ -87,29 +87,57 @@ fn a_zero_duration_ease_settles_on_its_first_frame() {
     let mut clock = FrameClock::new(&m);
     let _ = clock.run(1); // starts the clock
     let a = m.to(k, instant, 10.0_f32);
-    let _ = clock.run(1);
+    // The engine was at rest, so the first frame after the retarget restarts
+    // the clock; the second is the first one with time to spend.
+    let _ = clock.run(2);
     assert_eq!(a.get(), 10.0);
     assert!(!a.is_animating());
     assert!(!clock.run(1).animating, "nothing left to drive");
 }
 
 #[test]
-fn a_stalled_frame_settles_in_one_step() {
+fn an_animation_started_after_an_idle_stretch_plays_in_full() {
+    // Frames are drawn on demand, so an interface at rest draws none at all.
+    // The click that starts an animation therefore arrives an arbitrarily
+    // long time after the last frame, and that interval is not animation
+    // time: spending it would play the whole spring in one step.
     let m = Motion::new();
     let k = key!();
     let _ = m.to(k, FAST, 0.0_f32);
     let start = Instant::now();
     let _ = m.tick(start);
+
     let a = m.to(k, FAST, 10.0_f32);
-    let _ = m.tick(start + Duration::from_secs(5));
+    let mut at = start + Duration::from_secs(5);
+    let _ = m.tick(at);
+    assert_eq!(
+        a.get(),
+        0.0,
+        "the frame that restarts the clock only starts it"
+    );
+
+    at += Duration::from_millis(16);
+    let _ = m.tick(at);
+    let first = a.get();
+    assert!(
+        first > 0.0 && first < 3.0,
+        "one frame of a 300 ms spring, not five seconds of it: {first}"
+    );
+
+    let mut frames = 1;
+    while frames < 600 {
+        at += Duration::from_millis(16);
+        frames += 1;
+
+        if !m.tick(at).animating {
+            break;
+        }
+    }
+    assert!(frames > 5, "it played out over many frames: {frames}");
     assert!(
         (a.get() - 10.0).abs() < 1e-3,
-        "five seconds is past any 300 ms spring"
-    );
-    assert!(!a.is_animating());
-    assert!(
-        !m.tick(start + Duration::from_secs(6)).animating,
-        "the frame after the snap has nothing to drive"
+        "and still arrives: {}",
+        a.get()
     );
 }
 
@@ -170,7 +198,8 @@ fn a_layout_track_stops_invalidating_once_settled() {
     let _ = clock.run(1); // starts the clock
     let a = m.to(k, FAST, 10.0_f32);
     a.mark_tier(Tier::Layout);
-    let moving = clock.run(1);
+    // One frame to restart the clock after the idle stretch, one to move.
+    let moving = clock.run(2);
     assert!(moving.animating && moving.layout_invalid);
     let _ = clock.run_until_settled();
     let settled = clock.run(1);

@@ -1118,7 +1118,10 @@ mod tests {
 
         // Switching again must still slide rather than jump.
         build(0).diff(&mut tree);
+        // The engine has been at rest, so the first frame after the switch
+        // restarts its clock; the one after it is the first to move.
         let _ = motion.tick(start + Duration::from_millis(16 * 202));
+        let _ = motion.tick(start + Duration::from_millis(16 * 203));
         let position = state(&tree).position();
         assert!(
             position > 0.0 && position < 1.0,

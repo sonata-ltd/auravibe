@@ -45,6 +45,23 @@ impl HostId {
 /// Sentinel for "no animation has started yet".
 const NEVER: u64 = u64::MAX;
 
+/// The largest delta one frame may spend, in seconds: about four frames of a
+/// 60 Hz display.
+///
+/// A frame is charged the wall-clock time since the previous one, and that is
+/// right up to the point where there *was* no previous frame in any
+/// meaningful sense — a stall while a pipeline compiled, a window that came
+/// back from behind another one. Passing such a gap through would advance an
+/// animation to its end in a single step, which reads as a teleport rather
+/// than motion. Capping it makes the animation lose time instead of position:
+/// it resumes from where it stopped and still arrives, a little later than
+/// wall-clock would say.
+///
+/// The cap is deliberately generous. A machine genuinely running at 20 FPS is
+/// under it, and keeps animating in real time; only an actual hitch is
+/// clipped.
+const MAX_FRAME: f32 = 1.0 / 15.0;
+
 /// What one [`Motion::tick`] changed, and therefore what the host must
 /// invalidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -87,6 +104,10 @@ struct Engine {
     build: AtomicU64,
     last_tick: Mutex<Option<Instant>>,
     ticked: AtomicBool,
+    /// Whether the previous tick left anything moving. Frames are produced on
+    /// demand, so this is what separates "the last frame was one frame ago"
+    /// from "there were no frames at all until now". See [`MAX_FRAME`].
+    was_moving: AtomicBool,
     /// The build during which the first animation started, or [`NEVER`].
     first_start_build: AtomicU64,
     warned_never_ticked: AtomicBool,
@@ -132,6 +153,7 @@ impl Motion {
             build: AtomicU64::new(0),
             last_tick: Mutex::new(None),
             ticked: AtomicBool::new(false),
+            was_moving: AtomicBool::new(false),
             first_start_build: AtomicU64::new(NEVER),
             warned_never_ticked: AtomicBool::new(false),
             last_gc_build: AtomicU64::new(0),
@@ -460,10 +482,19 @@ impl Motion {
     /// Called once per frame by [`Host`], before the event reaches the rest
     /// of the tree, so every widget reads this frame's values.
     ///
-    /// The real elapsed time is passed straight through; springs are
-    /// evaluated in closed form, so wall-clock and animation time always
-    /// agree. A timestamp equal to or older than the last one advances
-    /// nothing and only reports whether frames are still wanted.
+    /// The real elapsed time is used; springs are evaluated in closed form,
+    /// so wall-clock and animation time agree frame by frame. A timestamp
+    /// equal to or older than the last one advances nothing and only reports
+    /// whether frames are still wanted.
+    ///
+    /// Two gaps are not animation time and are not spent as such. A frame
+    /// that follows a tick which left everything at rest starts the clock and
+    /// advances nothing, exactly as the very first tick of an engine does:
+    /// frames are produced on demand, so the interval before an animation
+    /// began is however long the interface sat still, not motion anybody
+    /// missed. Beyond that, a single frame spends at most 1/15 s, so a stall
+    /// — a pipeline compiling, a window coming back from behind another —
+    /// resumes the animation instead of teleporting it to the end.
     ///
     /// [`Host`]: crate::widget::Host
     #[must_use = "the status says whether to request a redraw and invalidate the layout"]
@@ -504,9 +535,23 @@ impl Motion {
 
         self.0.ticked.store(true, Ordering::Relaxed);
 
+        // Nothing was moving when the last frame was drawn, so no frames have
+        // been produced since: the gap is idle time, not a long frame. The
+        // clock restarts, the same as on the engine's first tick ever, and
+        // this frame's own delta is the next one's to spend.
+        let dt = if self.0.was_moving.load(Ordering::Relaxed) {
+            dt.min(MAX_FRAME)
+        } else {
+            0.0
+        };
+
         if dt <= 0.0 {
-            // First frame: the clock starts, nothing advances.
-            return self.pending_status();
+            // The clock starts (or restarts); nothing advances. A track that
+            // was just retargeted reports as animating, so the host asks for
+            // the frame that will move it.
+            let status = self.pending_status();
+            self.0.was_moving.store(status.animating, Ordering::Relaxed);
+            return status;
         }
 
         let tracks = self
@@ -527,6 +572,8 @@ impl Motion {
                 }
             }
         }
+
+        self.0.was_moving.store(status.animating, Ordering::Relaxed);
 
         status
     }
@@ -632,7 +679,7 @@ mod tests {
     use iced::Color;
     use iced::time::Instant;
 
-    use super::{GC_IDLE_BUILDS, HostId};
+    use super::{GC_IDLE_BUILDS, HostId, MAX_FRAME};
     use crate::testing::FrameClock;
     use crate::{Curve, Motion, Presence, SpringParams, Tier, key};
 
@@ -1423,6 +1470,10 @@ mod tests {
         let _ = rest.to(key, curve, moving);
         let _ = rest_clock.run(1); // start the clock first, so both see the same elapsed time
         let from_rest = rest.to(key, curve, 0.0_f32);
+        // This engine has been sitting at rest, so its next frame only
+        // restarts the clock, while `m` has been animating without a break.
+        // Spending that frame here leaves both advancing frame for frame.
+        let _ = rest_clock.run(1);
 
         // Retarget mid-flight: the pose holds for the delay…
         let _ = m.to(key, curve, 0.0_f32);
@@ -1487,22 +1538,103 @@ mod tests {
     }
 
     #[test]
-    fn a_stalled_window_settles_in_one_step() {
+    fn a_stalled_frame_resumes_the_animation_instead_of_teleporting_it() {
         let m = Motion::new();
         let key = key!();
         let _ = m.to(key, FAST, 0.0_f32);
         let value = m.to(key, FAST, 100.0_f32);
 
+        // Two real frames, so the clock is running and the spring is moving.
         let start = Instant::now();
         let _ = m.tick(start);
+        let _ = m.tick(start + Duration::from_millis(16));
+        let before = value.get();
+        assert!(before > 0.0 && before < 100.0, "in flight: {before}");
+
+        // Then the window is occluded (or a pipeline compiles) for half a
+        // minute. The frame that follows spends `MAX_FRAME`, not the stall.
         let status = m.tick(start + Duration::from_secs(30));
-        assert_eq!(
-            value.get(),
-            100.0,
-            "thirty seconds later the spring is at rest"
+        let after = value.get();
+        assert!(status.animating, "the spring is still on its way");
+        assert!(
+            after > before && after < 100.0,
+            "a stall resumes the spring rather than landing it: \
+             {before} -> {after}"
         );
-        assert!(status.animating, "the final snap is published this frame");
-        assert!(!m.tick(start + Duration::from_secs(31)).animating);
+
+        // A capped frame is worth at most `MAX_FRAME` of animation, and the
+        // spring still arrives under its own steam.
+        let reference = Motion::new();
+        let _ = reference.to(key, FAST, 0.0_f32);
+        let paced = reference.to(key, FAST, 100.0_f32);
+        let mut at = start;
+        for _ in 0..2 {
+            at += Duration::from_millis(16);
+            let _ = reference.tick(at);
+        }
+        at += Duration::from_secs_f32(MAX_FRAME);
+        let _ = reference.tick(at);
+        assert_eq!(
+            after,
+            paced.get(),
+            "the stalled frame advanced exactly one `MAX_FRAME`"
+        );
+    }
+
+    #[test]
+    fn a_pause_before_an_animation_is_not_charged_to_its_first_frame() {
+        // The interface sits still with the cursor resting on a button: it is
+        // drawing no frames at all. The click then starts an animation, and
+        // the frame it arrives on must not be handed the pause — which, for a
+        // spring this fast, would be its whole flight. How long the pause was
+        // must make no difference whatsoever.
+        let key = key!();
+
+        let after_a_pause = |pause: Duration| {
+            let m = Motion::new();
+            let mut at = Instant::now();
+            let _ = m.to(key, FAST, 0.0_f32);
+
+            // Settled frames: a hover, a cursor crossing the button.
+            for _ in 0..3 {
+                let _ = m.tick(at);
+                at += Duration::from_millis(16);
+            }
+
+            // Nothing moves, so nothing is drawn, for however long.
+            at += pause;
+
+            let clicked = m.to(key, FAST, 100.0_f32);
+            let mut trajectory = Vec::new();
+            for _ in 0..6 {
+                let _ = m.tick(at);
+                trajectory.push(clicked.get());
+                at += Duration::from_millis(16);
+            }
+            trajectory
+        };
+
+        let brief = after_a_pause(Duration::from_millis(16));
+        assert_eq!(
+            brief[0], 0.0,
+            "the frame that restarts the clock advances nothing"
+        );
+        assert!(
+            brief[1] > 0.0 && brief[1] < 40.0,
+            "the frame after it is worth one frame: {brief:?}"
+        );
+        assert!(
+            brief.windows(2).all(|w| w[1] >= w[0]),
+            "monotonic: {brief:?}"
+        );
+
+        for pause in [200, 400, 5_000] {
+            assert_eq!(
+                after_a_pause(Duration::from_millis(pause)),
+                brief,
+                "a {pause} ms pause changed the animation that followed it"
+            );
+        }
     }
 
     #[test]
