@@ -28,9 +28,30 @@ The first release. What each crate provides:
 - Curves: closed-form springs (`SpringParams::new(bounce, duration)`) and
   eases (`Easing`), `Curve::delayed`; presets `curves::{SMOOTH, QUICK, BOUNCY,
   STRUCTURAL, FADE, COLLAPSE}`.
+- A spring's `duration` is a perceptual duration, calibrated exactly as
+  SwiftUI's `Spring(duration:bounce:)` is (`stiffness = (2π / duration)²`,
+  `damping = (1 - bounce) · 4π / duration`), so values quoted for Apple's
+  springs can be used unchanged. The spring is ~99 % of the way there when the
+  duration elapses; full settling takes about 1.6× longer. The shipped presets
+  run shorter than Apple's own, whose durations are tuned for touch.
+- `curves::sharp::{SMOOTH, QUICK, BOUNCY, STRUCTURAL}`: the same four springs
+  about 1.6× brisker again, for interfaces that want to feel immediate.
 - `Tier::{Composite, Paint, Layout}` invalidation per track; `TickStatus`.
+- A frame spends real elapsed time, but only time a frame could have been
+  drawn in. Frames are produced on demand, so an interface at rest draws none
+  at all, and the gap before an animation starts is not motion anybody missed:
+  the frame that follows a tick which left everything settled restarts the
+  clock and advances nothing, exactly as an engine's first tick does. Past
+  that, one frame spends at most 1/15 s, so a stall — a pipeline compiling, a
+  window returning from behind another — resumes an animation where it stopped
+  instead of teleporting it to the end.
 - Widgets `widget::{Shape, Sized, Host}` with `shape()`, `sized()`, `host()`
   (under `widget` only; the engine and value types live at the root).
+- `Shape` snaps its quad to the pixel grid only while its geometry is still.
+  iced's `crisp` feature rounds *both* edges of a quad, so a moving one
+  changes size in whole-pixel lurches; the shape compares its bounds against
+  the previous frame's, which catches motion driven by an ancestor (a `Sized`
+  growing the space it sits in) as well as its own animated values.
 - Depends on `iced_core` and `log` only.
 
 #### iced_texture_cache

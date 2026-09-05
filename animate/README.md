@@ -112,6 +112,20 @@ interval is exact. `FADE` and `COLLAPSE` are eases. Build your own with
 `Curve::ease(Easing::EaseInOut, duration)`; `.delayed(duration)` sets the
 delay before the curve runs.
 
+A spring's `duration` is a *perceptual* duration, calibrated exactly as
+`SwiftUI`'s `Spring(duration:bounce:)` is — `stiffness = (2π / duration)²`,
+`damping = (1 - bounce) · 4π / duration` — so a pair of numbers from Apple's
+documentation or a `SwiftUI` prototype can be typed in unchanged. The spring
+is about 99 % of the way there when the duration elapses; the invisible
+remainder takes about half as long again.
+
+The shipped springs run a little shorter than Apple's own, which are tuned for
+touch, where a finger has already told the eye where things are going. A
+pointer-driven interface reads the same motion as unhurried at these lengths.
+`curves::sharp::{SMOOTH, QUICK, BOUNCY, STRUCTURAL}` is the same set about
+1.6× brisker again, for interfaces that want to feel immediate. Switch a whole
+interface, not half of one.
+
 ### Widgets
 
 `widget::Shape` (`shape()`): a rectangle whose fill, radius and border are
@@ -132,6 +146,12 @@ None. The crate depends on `iced_core` and `log` only.
 * A track is advanced only while a `Host` is in the view; without one, nothing
   moves. One `Motion` per window: two hosts ticking one engine in the same
   build is reported once and the second host is ignored for timing.
+* An animation retargeted from rest first moves on the *second* frame after
+  it. Frames are drawn on demand, so an interface at rest draws none, and the
+  interval before an animation started is idle time rather than motion that
+  was missed: the engine restarts its clock instead of spending it. Beyond
+  that, one frame spends at most 1/15 s, so a stall resumes an animation
+  where it stopped rather than landing it in a single step.
 
 ## Related crates
 

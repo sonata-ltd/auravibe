@@ -29,6 +29,8 @@
 //!
 //! [`Sized`]: crate::widget::Sized
 
+use std::cell::Cell;
+
 use iced_core::border::Radius;
 use iced_core::widget::{Tree, tree};
 use iced_core::{Background, Border, Color, Element, Length, Rectangle, Shadow, Size};
@@ -175,16 +177,38 @@ impl Shape {
     }
 }
 
+/// What the previous frame drew.
+///
+/// A shape whose own values are constants can still be moving: an ancestor
+/// may be animating the space it is laid out in, as [`Sized`](crate::widget::Sized)
+/// does. Comparing bounds between frames is how it finds out.
+#[derive(Debug, Default)]
+struct State {
+    last_bounds: Cell<Option<Rectangle>>,
+}
+
+impl Shape {
+    /// Whether this frame's quad should be snapped to the pixel grid.
+    ///
+    /// Records `bounds` as it goes, so the answer covers motion this widget
+    /// cannot see in its own values.
+    fn snaps(&self, state: &State, bounds: Rectangle) -> bool {
+        let moved = state.last_bounds.replace(Some(bounds)) != Some(bounds);
+
+        renderer::Quad::default().snap && !moved && !self.is_animating()
+    }
+}
+
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for Shape
 where
     Renderer: renderer::Renderer,
 {
     fn tag(&self) -> tree::Tag {
-        tree::Tag::stateless()
+        tree::Tag::of::<State>()
     }
 
     fn state(&self) -> tree::State {
-        tree::State::None
+        tree::State::new(State::default())
     }
 
     fn size(&self) -> Size<Length> {
@@ -211,7 +235,7 @@ where
 
     fn draw(
         &self,
-        _tree: &Tree,
+        tree: &Tree,
         renderer: &mut Renderer,
         _theme: &Theme,
         _style: &renderer::Style,
@@ -220,6 +244,9 @@ where
         viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
+        // Asked before the visibility test, so the record stays current for a
+        // shape that scrolls back into view.
+        let snap = self.snaps(tree.state.downcast_ref::<State>(), bounds);
 
         if bounds.intersection(viewport).is_none() {
             return;
@@ -231,7 +258,9 @@ where
         //
         // Snapping to the pixel grid keeps a resting 1 px border as crisp as
         // the container next to it (when iced's `crisp` feature is on), but
-        // snapping a moving edge makes it jitter, so it is off in motion.
+        // it rounds *both* edges of the quad, so a moving one changes size in
+        // whole-pixel lurches. Hence `snaps`: at rest, crisp; in motion, in
+        // whatever place the frame actually asks for.
         renderer.fill_quad(
             renderer::Quad {
                 bounds,
@@ -241,7 +270,7 @@ where
                     radius: non_negative_radius(self.radius.get()),
                 },
                 shadow: Shadow::default(),
-                snap: !self.is_animating() && renderer::Quad::default().snap,
+                snap,
             },
             Background::Color(clamped_color(self.fill.get())),
         );
@@ -263,11 +292,70 @@ where
 #[cfg(all(test, debug_assertions))]
 mod tests {
     use iced_core::border::Radius;
-    use iced_core::{Color, Length, Size, Widget};
+    use iced_core::{Color, Length, Point, Rectangle, Size, Widget};
 
-    use super::{Shape, clamped_color, non_negative_radius, shape};
+    use super::{Shape, State, clamped_color, non_negative_radius, shape};
     use crate::testing::FrameClock;
     use crate::{Motion, curves::BOUNCY, key};
+
+    #[test]
+    fn a_shape_moved_by_an_ancestor_does_not_snap_to_the_pixel_grid() {
+        // `crisp` decides whether snapping is on the table at all; when it is
+        // off nothing here can snap and there is nothing to check.
+        if !iced_core::renderer::Quad::default().snap {
+            return;
+        }
+
+        let widget: Shape = shape();
+        let state = State::default();
+        let at = |x: f32, side: f32| Rectangle::new(Point::new(x, 4.0), Size::new(side, side));
+
+        assert!(
+            !widget.snaps(&state, at(2.0, 40.0)),
+            "nothing to compare against on the first frame"
+        );
+        assert!(
+            widget.snaps(&state, at(2.0, 40.0)),
+            "standing still: snapped, so a resting edge stays crisp"
+        );
+        // The shape's own values are all constants here — this is exactly the
+        // `size (layout)` case, where a `Sized` ancestor grows the bounds.
+        assert!(
+            !widget.snaps(&state, at(2.0, 41.3)),
+            "grown by an ancestor: not snapped, or the growth steps by whole pixels"
+        );
+        assert!(
+            !widget.snaps(&state, at(3.7, 41.3)),
+            "moved by an ancestor: likewise"
+        );
+        assert!(
+            widget.snaps(&state, at(3.7, 41.3)),
+            "settled again: snapped"
+        );
+    }
+
+    #[test]
+    fn a_shape_animating_its_own_paint_does_not_snap_either() {
+        if !iced_core::renderer::Quad::default().snap {
+            return;
+        }
+
+        let motion = Motion::new();
+        let mut clock = FrameClock::new(&motion);
+        let k = key!();
+        let _ = motion.to(k, BOUNCY, Color::BLACK);
+
+        let widget: Shape = shape().fill(motion.to(k, BOUNCY, Color::WHITE));
+        let state = State::default();
+        let bounds = Rectangle::new(Point::new(2.0, 4.0), Size::new(40.0, 40.0));
+
+        let _ = clock.run(3);
+        assert!(!widget.snaps(&state, bounds), "the fill is still moving");
+        assert!(!widget.snaps(&state, bounds), "and it stays unsnapped");
+
+        let _ = clock.run_until_settled();
+        assert!(widget.snaps(&state, bounds), "settled: snapped again");
+    }
 
     #[test]
     fn a_shape_without_a_size_measures_nothing() {
