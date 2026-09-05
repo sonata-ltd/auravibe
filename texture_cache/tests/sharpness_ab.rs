@@ -54,7 +54,9 @@ fn draw_text(renderer: &mut Renderer, at: Point) {
 }
 
 fn luminance(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .map(|p| ((u16::from(p[0]) + u16::from(p[1]) + u16::from(p[2])) / 3) as u8)
         .collect()
 }
